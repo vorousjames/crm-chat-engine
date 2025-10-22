@@ -164,6 +164,13 @@ Please provide a clear, simple explanation without technical jargon:"""
             "status": "error"
         }
 
+def health_check():
+    """Simple health check endpoint"""
+    global model, tokenizer
+    if model is None or tokenizer is None:
+        return {"status": "loading", "model_loaded": False}
+    return {"status": "ready", "model_loaded": True}
+
 if __name__ == "__main__":
     # Start the RunPod serverless worker
     runpod.serverless.start({
