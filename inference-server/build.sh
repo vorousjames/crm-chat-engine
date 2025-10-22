@@ -15,15 +15,43 @@ FULL_IMAGE_NAME="$DOCKER_USERNAME/$IMAGE_NAME:latest"
 cd "$(dirname "$0")"
 
 echo "📋 Build Configuration:"
-echo "  Base Image: runpod/pytorch:2.4.0-py3.11-cuda12.1.1-devel-ubuntu22.04"
 echo "  PyTorch Version: 2.6.0"
-echo "  CUDA Version: 12.1"
 echo "  Target Image: $FULL_IMAGE_NAME"
 echo ""
 
+echo "Available Dockerfile options:"
+echo "1. Dockerfile (RunPod base - recommended)"  
+echo "2. Dockerfile.nvidia (NVIDIA CUDA base)"
+echo "3. Dockerfile.simple (Python slim base)"
+echo ""
+
+read -p "Choose Dockerfile (1-3) or press Enter for default (1): " choice
+choice=${choice:-1}
+
+case $choice in
+    1)
+        DOCKERFILE="Dockerfile"
+        echo "Using RunPod base image"
+        ;;
+    2) 
+        DOCKERFILE="Dockerfile.nvidia"
+        echo "Using NVIDIA CUDA base image"
+        ;;
+    3)
+        DOCKERFILE="Dockerfile.simple" 
+        echo "Using Python slim base image"
+        ;;
+    *)
+        echo "Invalid choice, using default Dockerfile"
+        DOCKERFILE="Dockerfile"
+        ;;
+esac
+
+echo ""
+
 # Build the Docker image
-echo "🔨 Building Docker image..."
-docker build -t $IMAGE_NAME .
+echo "🔨 Building Docker image with $DOCKERFILE..."
+docker build -f $DOCKERFILE -t $IMAGE_NAME .
 
 if [ $? -eq 0 ]; then
     echo "✅ Build successful!"

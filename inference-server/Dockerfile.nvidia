@@ -1,0 +1,38 @@
+FROM nvidia/cuda:11.8-devel-ubuntu22.04
+
+# Install Python 3.10
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    git \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.10 the default python
+RUN ln -s /usr/bin/python3.10 /usr/bin/python
+
+WORKDIR /app
+
+# Copy requirements and handler
+COPY requirements.txt handler.py ./
+
+# Upgrade pip
+RUN pip install --upgrade pip
+
+# Install PyTorch 2.6.0 with CUDA 11.8
+RUN pip install torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Install other dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV TRANSFORMERS_CACHE=/app/cache
+ENV HF_HOME=/app/cache
+
+# Create cache directory
+RUN mkdir -p /app/cache
+
+CMD ["python", "handler.py"]
