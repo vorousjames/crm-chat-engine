@@ -1,0 +1,16 @@
+{
+  "name": "AI Chatbot Inference Server",
+  "description": "Serverless inference for AI chatbot using DeepSeek Coder",
+  "docker_image": "your-dockerhub-username/ai-chatbot-inference:latest",
+  "container_disk_in_gb": 30,
+  "volume_in_gb": 0,
+  "gpu_type": "RTX A5000",
+  "min_workers": 0,
+  "max_workers": 3,
+  "idle_timeout": 5,
+  "execution_timeout": 300,
+  "env": {
+    "TRANSFORMERS_CACHE": "/runpod-volume",
+    "HF_HOME": "/runpod-volume"
+  }
+}

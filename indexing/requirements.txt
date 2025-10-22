@@ -1,0 +1,5 @@
+weaviate-client==3.25.3
+python-dotenv>=1.0.0
+sentence-transformers>=2.2.2
+torch>=2.0.0
+pathlib>=1.0.0
