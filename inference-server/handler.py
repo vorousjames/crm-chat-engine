@@ -66,7 +66,7 @@ def load_model():
             device_map=device_map,
             trust_remote_code=True,
             torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True  # Better memory management in newer PyTorch
+            low_cpu_mem_usage=True  # Better memory management in PyTorch 2.6.0
         )
         
         logger.info(f"Model loaded successfully on {platform.system()}!")
@@ -136,7 +136,7 @@ Please provide a clear, simple explanation without technical jargon:"""
                 top_p=0.9,
                 pad_token_id=tokenizer.eos_token_id,
                 repetition_penalty=1.1,
-                use_cache=True  # Better caching in newer versions
+                use_cache=True  # Enhanced caching in PyTorch 2.6.0
             )
         
         # Decode response

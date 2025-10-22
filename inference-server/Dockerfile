@@ -1,4 +1,4 @@
-FROM runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.1.1-devel-ubuntu22.04
 
 WORKDIR /
 
@@ -14,7 +14,7 @@ WORKDIR /app
 # Copy requirements first (for better Docker layer caching)
 COPY requirements.txt .
 
-# Install PyTorch 2.6.0 with CUDA support
+# Install PyTorch 2.6.0 with CUDA 12.1 (compatible with base image)
 RUN pip install torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # Install other Python dependencies
