@@ -2,6 +2,8 @@
   "name": "root-wrapper",
   "private": true,
   "scripts": {
-    "heroku-postbuild": "cd chat-server && npm install"
+    "heroku-postbuild": "cd chat-server && npm install",
+    "index": "cd indexing && source venv/bin/activate && python3 handler.py",
+    "index:test": "cd indexing && source venv/bin/activate && python3 test_connection.py"
   }
 }
