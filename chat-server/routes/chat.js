@@ -7,9 +7,35 @@ const InferenceService = require("../utils/inferenceService");
 const logger = require("../utils/logger");
 const { validateApiKey } = require("../middleware/auth");
 
-// Initialize services
-const weaviateService = new WeaviateService();
-const inferenceService = new InferenceService();
+// Initialize services lazily to handle connection errors gracefully
+let weaviateService = null;
+let inferenceService = null;
+
+function getWeaviateService() {
+  if (!weaviateService) {
+    try {
+      weaviateService = new WeaviateService();
+      logger.info("WeaviateService initialized successfully");
+    } catch (error) {
+      logger.error("Failed to initialize WeaviateService", { error: error.message });
+      throw new Error("Search service initialization failed");
+    }
+  }
+  return weaviateService;
+}
+
+function getInferenceService() {
+  if (!inferenceService) {
+    try {
+      inferenceService = new InferenceService();
+      logger.info("InferenceService initialized successfully");
+    } catch (error) {
+      logger.error("Failed to initialize InferenceService", { error: error.message });
+      throw new Error("AI service initialization failed");
+    }
+  }
+  return inferenceService;
+}
 
 // Request validation schemas
 const chatRequestSchema = Joi.object({
@@ -44,7 +70,8 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
 
     // Step 1: Search for relevant app features
     logger.debug("Searching for relevant features...");
-    const relevantFeatures = await weaviateService.searchFeatures(
+    const weaviateServiceInstance = getWeaviateService();
+    const relevantFeatures = await weaviateServiceInstance.searchFeatures(
       message,
       maxResults
     );
@@ -72,7 +99,8 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
 
     // Step 3: Generate AI response
     logger.debug("Generating AI response...");
-    const aiResponse = await inferenceService.generateResponse({
+    const inferenceServiceInstance = getInferenceService();
+    const aiResponse = await inferenceServiceInstance.generateResponse({
       message,
       context: context,
       conversationId,
@@ -135,7 +163,8 @@ router.get(
 // Get available feature types
 router.get("/features/types", validateApiKey, async (req, res, next) => {
   try {
-    const featureTypes = await weaviateService.getFeatureTypes();
+    const weaviateServiceInstance = getWeaviateService();
+    const featureTypes = await weaviateServiceInstance.getFeatureTypes();
 
     res.json({
       featureTypes,
@@ -156,7 +185,8 @@ router.get("/features/types", validateApiKey, async (req, res, next) => {
 // Suggest questions based on available features
 router.get("/suggestions", validateApiKey, async (req, res, next) => {
   try {
-    const suggestions = await weaviateService.getSuggestedQuestions();
+    const weaviateServiceInstance = getWeaviateService();
+    const suggestions = await weaviateServiceInstance.getSuggestedQuestions();
 
     res.json({
       suggestions: suggestions || [
