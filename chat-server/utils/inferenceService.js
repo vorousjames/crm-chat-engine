@@ -29,55 +29,38 @@ User's question: ${message}
 
 Provide a helpful response that explains what the user can do in the interface:`;
 
-      const payload = {
-        input: {
-          message: prompt,
-          max_length: 400,
-          temperature: 0.3,
-        },
-      };
-
-      // ...rest of your existing RunPod API call code...
+      if (this.useLocalInference) {
+        return await this.generateLocalResponse({ message: prompt, context });
+      } else {
+        return await this.generateRunpodResponse({ message: prompt, context });
+      }
     } catch (error) {
-      // ...existing error handling...
+      logger.error("Response generation failed", { error: error.message });
+
+      // Return a proper fallback response structure
+      return {
+        response: this.generateFallbackResponse(message, context),
+        confidence: 0.3,
+        source: "fallback",
+      };
     }
   }
 
   async generateLocalResponse({ message, context }) {
     try {
-      // This assumes your local inference server has an endpoint
-      // You might need to adjust based on your actual implementation
-      const payload = {
-        input: {
-          message,
-          context: this.formatContextForAI(context),
-          max_length: 400,
-        },
+      const response = await axios.post(this.localUrl + "/generate", {
+        prompt: message,
+        max_length: 400,
+        temperature: 0.3,
+      });
+
+      return {
+        response:
+          response.data?.generated_text ||
+          "I apologize, but I couldn't generate a proper response.",
+        confidence: 0.8,
+        source: "local",
       };
-
-      logger.debug("Calling local inference service", {
-        url: this.localUrl,
-        messageLength: message.length,
-        contextItems: context.length,
-      });
-
-      const response = await axios.post(`${this.localUrl}/inference`, payload, {
-        timeout: 30000, // 30 second timeout
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
-
-      if (response.data.status === "success") {
-        return {
-          response: response.data.response,
-          confidence: 0.8,
-          source: "local",
-          tokensUsed: response.data.tokens_used,
-        };
-      } else {
-        throw new Error(response.data.error || "Local inference failed");
-      }
     } catch (error) {
       logger.error("Local inference failed", { error: error.message });
       throw error;
@@ -86,39 +69,47 @@ Provide a helpful response that explains what the user can do in the interface:`
 
   async generateRunpodResponse({ message, context }) {
     try {
+      if (!this.runpodUrl || !this.runpodApiKey) {
+        throw new Error("RunPod configuration missing");
+      }
+
       const payload = {
         input: {
-          message,
-          context: this.formatContextForAI(context),
+          message: message,
           max_length: 400,
+          temperature: 0.3,
         },
       };
 
-      logger.debug("Calling RunPod inference service", {
+      logger.debug("Sending request to RunPod", {
         endpoint: this.runpodUrl,
         messageLength: message.length,
-        contextItems: context.length,
       });
 
       const response = await axios.post(this.runpodUrl, payload, {
-        timeout: 60000, // 60 second timeout for RunPod
         headers: {
           Authorization: `Bearer ${this.runpodApiKey}`,
           "Content-Type": "application/json",
         },
+        timeout: 30000,
       });
 
-      if (response.data.status === "COMPLETED") {
-        const output = response.data.output;
+      if (response.data?.status === "COMPLETED") {
+        const generatedText =
+          response.data?.output?.response ||
+          response.data?.output?.generated_text ||
+          "I couldn't generate a proper response.";
+
         return {
-          response: output.response,
-          confidence: 0.85,
+          response: generatedText,
+          confidence: 0.9,
           source: "runpod",
-          tokensUsed: output.tokens_used,
-          executionTime: response.data.executionTime,
         };
       } else {
-        throw new Error("RunPod inference failed: " + response.data.error);
+        logger.warn("RunPod returned non-completed status", {
+          status: response.data?.status,
+        });
+        throw new Error(`RunPod status: ${response.data?.status}`);
       }
     } catch (error) {
       logger.error("RunPod inference failed", { error: error.message });
@@ -128,7 +119,7 @@ Provide a helpful response that explains what the user can do in the interface:`
 
   formatContextForAI(context) {
     if (!context || context.length === 0) {
-      return "No specific features found, provide general help.";
+      return "No specific context available.";
     }
 
     return context
@@ -146,29 +137,41 @@ Related features: ${feature.related}
   generateFallbackResponse(message, context) {
     const lowerMessage = message.toLowerCase();
 
-    // Simple keyword-based responses
-    if (lowerMessage.includes("login") || lowerMessage.includes("sign in")) {
-      return "To log into your account, look for a 'Login' or 'Sign In' button, usually found at the top of the page. You'll need your username/email and password.";
+    // Simple keyword-based responses for your CRM
+    if (
+      lowerMessage.includes("login") ||
+      lowerMessage.includes("admin") ||
+      lowerMessage.includes("dashboard")
+    ) {
+      return `To access the admin dashboard, you'll need to navigate to the login page and enter your administrator credentials. Once logged in, you'll have access to the main dashboard where you can manage leads, users, and create marketing pages. If you don't have admin access, contact your system administrator.`;
     }
 
-    if (lowerMessage.includes("password")) {
-      return "If you need to reset your password, look for a 'Forgot Password' link on the login page. You can also update your password in your account settings once logged in.";
+    if (lowerMessage.includes("estimate") || lowerMessage.includes("quote")) {
+      return `To get an estimate, visit one of our service pages (like stamped concrete or demolition), click the "Get Free Estimate" button, fill out the form with your name, phone, address, and service type, then submit it. Our team will call you back within 24 hours to discuss your project.`;
     }
 
-    if (lowerMessage.includes("search") || lowerMessage.includes("find")) {
-      return "Most apps have a search feature - look for a search box (usually marked with a magnifying glass icon) where you can type keywords to find what you're looking for.";
+    if (lowerMessage.includes("lead") || lowerMessage.includes("customer")) {
+      return `To manage leads, access the admin dashboard and click on the Leads tab. From there you can view all customer inquiries, update lead stages, add notes, and track your sales pipeline from initial contact to completed projects.`;
     }
 
-    if (lowerMessage.includes("export") || lowerMessage.includes("download")) {
-      return "Many apps allow you to export or download your data. Look for 'Export', 'Download', or 'Save' options in menus or settings areas.";
+    if (
+      lowerMessage.includes("area") ||
+      lowerMessage.includes("location") ||
+      lowerMessage.includes("serve")
+    ) {
+      return `To check if we serve your area, visit our location-specific pages like /cleveland-ohio or /akron-ohio to see service availability in your city. You can also request an estimate and we'll confirm if we cover your location.`;
     }
 
-    if (lowerMessage.includes("edit") || lowerMessage.includes("update")) {
-      return "To edit your information, look for 'Edit', 'Update', or pencil icons next to the information you want to change. Don't forget to save your changes!";
+    if (
+      lowerMessage.includes("team") ||
+      lowerMessage.includes("user") ||
+      lowerMessage.includes("staff")
+    ) {
+      return `To manage team members, go to the admin dashboard and navigate to the Users tab. From there you can add new team members, set their roles and permissions, and track team activity.`;
     }
 
     // Generic helpful response
-    return `I'd be happy to help you with "${message}"! While I don't have specific information about this feature right now, I recommend checking the main menu or settings area of the app. You can also try looking for help documentation or contact support if available.`;
+    return `I'd be happy to help you with "${message}"! This construction CRM system allows customers to request estimates through service pages, and staff to manage leads, users, and marketing pages through the admin dashboard. What specific feature would you like to know more about?`;
   }
 }
 

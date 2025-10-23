@@ -4,6 +4,14 @@ const logger = require("./logger");
 class WeaviateService {
   constructor() {
     this.client = this.initWeaviateClient();
+    this.embedder = null;
+    this.embeddingModelReady = false;
+
+    // Initialize embedding model asynchronously but don't wait
+    this.initEmbeddingModel().catch((error) => {
+      logger.error("Failed to initialize embedding model:", error);
+    });
+
     logger.info("WeaviateService initialized successfully");
   }
 
@@ -14,18 +22,13 @@ class WeaviateService {
     logger.info(`Connecting to Weaviate Cloud at: ${weaviateUrl}`);
 
     try {
-      // For Weaviate Cloud, we need to configure it differently
       if (weaviateUrl.includes("weaviate.cloud")) {
         return weaviate.client({
           scheme: "https",
           host: weaviateUrl.replace("https://", ""),
           apiKey: new weaviate.ApiKey(weaviateApiKey),
-          headers: {
-            "X-OpenAI-Api-Key": "", // Not needed for your setup
-          },
         });
       } else {
-        // Local Weaviate setup
         return weaviate.client({
           scheme: weaviateUrl.startsWith("https") ? "https" : "http",
           host: weaviateUrl.replace(/https?:\/\//, ""),
@@ -37,6 +40,56 @@ class WeaviateService {
       }
     } catch (error) {
       logger.error("Failed to initialize Weaviate client:", error);
+      throw error;
+    }
+  }
+
+  async initEmbeddingModel() {
+    try {
+      const { pipeline } = require("@xenova/transformers");
+      logger.info("Loading embedding model: all-MiniLM-L6-v2");
+      this.embedder = await pipeline(
+        "feature-extraction",
+        "Xenova/all-MiniLM-L6-v2"
+      );
+      this.embeddingModelReady = true;
+      logger.info("Embedding model loaded successfully!");
+    } catch (error) {
+      logger.error("Failed to load embedding model:", error);
+      this.embeddingModelReady = false;
+      throw error;
+    }
+  }
+
+  async generateEmbedding(text) {
+    // Wait for embedding model to be ready if it's still loading
+    if (!this.embeddingModelReady) {
+      logger.info("Waiting for embedding model to finish loading...");
+
+      // Wait up to 30 seconds for the model to load
+      let attempts = 0;
+      while (!this.embeddingModelReady && attempts < 60) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        attempts++;
+      }
+
+      if (!this.embeddingModelReady) {
+        throw new Error("Embedding model failed to load within timeout period");
+      }
+    }
+
+    if (!this.embedder) {
+      throw new Error("Embedding model not initialized");
+    }
+
+    try {
+      const output = await this.embedder(text, {
+        pooling: "mean",
+        normalize: true,
+      });
+      return Array.from(output.data);
+    } catch (error) {
+      logger.error("Embedding generation failed:", error);
       throw error;
     }
   }
@@ -66,26 +119,12 @@ class WeaviateService {
 
       logger.debug("Searching for user workflows", { query, limit });
 
-      // Check if AppFeature class exists first
-      try {
-        const schema = await this.client.schema
-          .classGetter()
-          .withClassName("AppFeature")
-          .do();
-        logger.debug("AppFeature class found", {
-          properties: schema.properties?.length,
-        });
-      } catch (schemaError) {
-        logger.error(
-          "AppFeature class not found - you may need to re-run the indexer",
-          { error: schemaError.message }
-        );
-        throw new Error(
-          "AppFeature class not found in Weaviate. Please re-run the indexing process."
-        );
-      }
+      // Generate embedding for the query (this will wait if model is still loading)
+      logger.debug("Generating embedding for query...");
+      const queryEmbedding = await this.generateEmbedding(query);
+      logger.debug("Embedding generated successfully");
 
-      // Use Weaviate's built-in text search
+      // Use nearVector instead of nearText
       const result = await this.client.graphql
         .get()
         .withClassName("AppFeature")
@@ -102,8 +141,8 @@ class WeaviateService {
           "keywords",
           "_additional { certainty distance }",
         ])
-        .withNearText({
-          concepts: [query],
+        .withNearVector({
+          vector: queryEmbedding,
           certainty: 0.6,
         })
         .withLimit(limit)
@@ -156,7 +195,6 @@ class WeaviateService {
 
   async getSuggestedQuestions() {
     try {
-      // Get a sample of different workflow types
       const result = await this.client.graphql
         .get()
         .withClassName("AppFeature")
@@ -165,17 +203,11 @@ class WeaviateService {
         .do();
 
       const features = result?.data?.Get?.AppFeature || [];
-
-      // Generate questions based on keywords and workflow types
       const questions = [];
 
       features.forEach((feature) => {
-        const keywords =
-          feature.keywords?.split(",").map((k) => k.trim()) || [];
-        const userType = feature.userType;
         const featureType = feature.featureType;
 
-        // Generate contextual questions
         if (featureType === "customer_estimate_request") {
           questions.push(
             "How do I get an estimate?",
@@ -194,7 +226,7 @@ class WeaviateService {
         }
       });
 
-      return [...new Set(questions)]; // Remove duplicates
+      return [...new Set(questions)];
     } catch (error) {
       logger.error("Failed to get suggested questions", {
         error: error.message,
