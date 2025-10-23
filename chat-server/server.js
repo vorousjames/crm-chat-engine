@@ -22,12 +22,17 @@ app.use(helmet());
 // CORS configuration - allow all origins since we're using API key authentication
 app.use(
   cors({
-    origin: true, // Allow all origins
-    credentials: true,
+    origin: "*", // Explicitly allow all origins
+    credentials: false, // Set to false when using origin: "*"
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-API-Key"],
+    preflightContinue: false,
+    optionsSuccessStatus: 200,
   })
 );
+
+// Explicit OPTIONS handler for all routes
+app.options("*", cors());
 
 // Rate limiting
 const limiter = rateLimit({
