@@ -117,18 +117,24 @@ try {
     logger.info(`📚 API Documentation: http://localhost:${PORT}/api/docs`);
   });
 } catch (error) {
-  logger.error("Failed to start server", { error: error.message, stack: error.stack });
+  logger.error("Failed to start server", {
+    error: error.message,
+    stack: error.stack,
+  });
   process.exit(1);
 }
 
 // Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
+process.on("uncaughtException", (error) => {
+  logger.error("Uncaught Exception", {
+    error: error.message,
+    stack: error.stack,
+  });
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection', { reason, promise });
+process.on("unhandledRejection", (reason, promise) => {
+  logger.error("Unhandled Rejection", { reason, promise });
   process.exit(1);
 });
 
