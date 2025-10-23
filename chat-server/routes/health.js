@@ -4,8 +4,19 @@ const WeaviateService = require("../utils/weaviateService");
 const InferenceService = require("../utils/inferenceService");
 const logger = require("../utils/logger");
 
-// Health check endpoint
-router.get("/check", async (req, res) => {
+// Health check endpoint - basic health without external dependencies
+router.get("/check", (req, res) => {
+  res.status(200).json({
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    version: "1.0.0",
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || "development"
+  });
+});
+
+// Detailed health check with external services
+router.get("/detailed", async (req, res) => {
   const startTime = Date.now();
   const health = {
     status: "healthy",

@@ -4,10 +4,14 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 require("dotenv").config();
 
+console.log("Loading routes and middleware...");
+
 const chatRoutes = require("./routes/chat");
 const healthRoutes = require("./routes/health");
 const errorHandler = require("./middleware/errorHandler");
 const logger = require("./utils/logger");
+
+console.log("All modules loaded successfully");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -104,12 +108,28 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-// Start server
-app.listen(PORT, () => {
-  logger.info(`🚀 Home-Service Chatbot API running on port ${PORT}`);
-  logger.info(`📍 Environment: ${process.env.NODE_ENV}`);
-  logger.info(`🔗 Local access: http://localhost:${PORT}`);
-  logger.info(`📚 API Documentation: http://localhost:${PORT}/api/docs`);
+// Start server with error handling
+try {
+  app.listen(PORT, () => {
+    logger.info(`🚀 Home-Service Chatbot API running on port ${PORT}`);
+    logger.info(`📍 Environment: ${process.env.NODE_ENV}`);
+    logger.info(`🔗 Local access: http://localhost:${PORT}`);
+    logger.info(`📚 API Documentation: http://localhost:${PORT}/api/docs`);
+  });
+} catch (error) {
+  logger.error("Failed to start server", { error: error.message, stack: error.stack });
+  process.exit(1);
+}
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection', { reason, promise });
+  process.exit(1);
 });
 
 module.exports = app;
