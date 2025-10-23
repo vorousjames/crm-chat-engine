@@ -82,7 +82,7 @@ app.get("/api/wake", (req, res) => {
 
     res.json({
       status: "awake",
-      message: "Service is warmed up and ready",
+      message: "Chatbot has woken up",
       timestamp: new Date().toISOString(),
       responseTime: `${responseTime}ms`,
       environment: process.env.NODE_ENV || "development",
@@ -92,7 +92,7 @@ app.get("/api/wake", (req, res) => {
     logger.error("Wake endpoint error", { error: error.message });
     res.status(503).json({
       status: "warming_up",
-      message: "Service is starting up, please retry in a moment",
+      message: "Chatbot is waking up, please retry in a moment",
       error: error.message,
     });
   }
