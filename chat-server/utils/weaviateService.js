@@ -4,7 +4,6 @@ const logger = require("./logger");
 class WeaviateService {
   constructor() {
     this.client = this.initWeaviateClient();
-    // Remove the embedding model initialization - let Weaviate handle it
     logger.info("WeaviateService initialized successfully");
   }
 
@@ -12,28 +11,81 @@ class WeaviateService {
     const weaviateUrl = process.env.WEAVIATE_URL || "http://localhost:8080";
     const weaviateApiKey = process.env.WEAVIATE_API_KEY;
 
-    if (
-      weaviateApiKey &&
-      weaviateApiKey !== "your-actual-weaviate-api-key-here"
-    ) {
-      return weaviate.client({
-        scheme: "http",
-        host: weaviateUrl.replace("http://", "").replace("https://", ""),
-        apiKey: new weaviate.ApiKey(weaviateApiKey),
+    logger.info(`Connecting to Weaviate Cloud at: ${weaviateUrl}`);
+
+    try {
+      // For Weaviate Cloud, we need to configure it differently
+      if (weaviateUrl.includes("weaviate.cloud")) {
+        return weaviate.client({
+          scheme: "https",
+          host: weaviateUrl.replace("https://", ""),
+          apiKey: new weaviate.ApiKey(weaviateApiKey),
+          headers: {
+            "X-OpenAI-Api-Key": "", // Not needed for your setup
+          },
+        });
+      } else {
+        // Local Weaviate setup
+        return weaviate.client({
+          scheme: weaviateUrl.startsWith("https") ? "https" : "http",
+          host: weaviateUrl.replace(/https?:\/\//, ""),
+          ...(weaviateApiKey &&
+            weaviateApiKey !== "your-actual-weaviate-api-key-here" && {
+              apiKey: new weaviate.ApiKey(weaviateApiKey),
+            }),
+        });
+      }
+    } catch (error) {
+      logger.error("Failed to initialize Weaviate client:", error);
+      throw error;
+    }
+  }
+
+  async testConnection() {
+    try {
+      const meta = await this.client.misc.metaGetter().do();
+      logger.info("✅ Weaviate Cloud connection successful", {
+        version: meta.version,
       });
-    } else {
-      return weaviate.client({
-        scheme: "http",
-        host: weaviateUrl.replace("http://", "").replace("https://", ""),
+      return true;
+    } catch (error) {
+      logger.error("❌ Weaviate Cloud connection failed", {
+        error: error.message,
       });
+      return false;
     }
   }
 
   async searchFeatures(query, limit = 5) {
     try {
+      // Test connection first
+      const isConnected = await this.testConnection();
+      if (!isConnected) {
+        throw new Error("Weaviate Cloud connection failed");
+      }
+
       logger.debug("Searching for user workflows", { query, limit });
 
-      // Use Weaviate's built-in text search instead of generating embeddings
+      // Check if AppFeature class exists first
+      try {
+        const schema = await this.client.schema
+          .classGetter()
+          .withClassName("AppFeature")
+          .do();
+        logger.debug("AppFeature class found", {
+          properties: schema.properties?.length,
+        });
+      } catch (schemaError) {
+        logger.error(
+          "AppFeature class not found - you may need to re-run the indexer",
+          { error: schemaError.message }
+        );
+        throw new Error(
+          "AppFeature class not found in Weaviate. Please re-run the indexing process."
+        );
+      }
+
+      // Use Weaviate's built-in text search
       const result = await this.client.graphql
         .get()
         .withClassName("AppFeature")
@@ -59,23 +111,29 @@ class WeaviateService {
 
       const features = result?.data?.Get?.AppFeature || [];
 
-      logger.debug(`Found ${features.length} relevant workflows`);
+      logger.debug(
+        `Found ${features.length} relevant workflows for query: "${query}"`
+      );
 
       return features.map((feature) => ({
-        featureDescription: feature.featureDescription,
-        userBenefit: feature.userBenefit,
-        featureType: feature.featureType,
-        userActions: feature.userActions,
-        inputs: feature.inputs,
-        outputs: feature.outputs,
-        actualWorkflow: feature.actualWorkflow,
-        userType: feature.userType,
-        uiComponents: feature.uiComponents,
-        keywords: feature.keywords,
+        featureDescription:
+          feature.featureDescription || "No description available",
+        userBenefit: feature.userBenefit || "User benefit not specified",
+        featureType: feature.featureType || "unknown",
+        userActions: feature.userActions || "No actions specified",
+        inputs: feature.inputs || "No inputs specified",
+        outputs: feature.outputs || "No outputs specified",
+        actualWorkflow: feature.actualWorkflow || "No workflow specified",
+        userType: feature.userType || "unknown",
+        uiComponents: feature.uiComponents || "No components specified",
+        keywords: feature.keywords || "No keywords",
         score: feature._additional?.certainty || 0.7,
       }));
     } catch (error) {
-      logger.error("Feature search failed", { error: error.message });
+      logger.error("Feature search failed", {
+        error: error.message,
+        weaviateUrl: process.env.WEAVIATE_URL,
+      });
       throw error;
     }
   }
