@@ -65,6 +65,39 @@ app.use((req, res, next) => {
 app.use("/api/chat", chatRoutes);
 app.use("/api/health", healthRoutes);
 
+// Wake endpoint for serverless cold start
+app.get("/api/wake", (req, res) => {
+  const startTime = Date.now();
+
+  try {
+    // Perform any necessary warm-up operations here
+    // e.g., initialize connections, load models, etc.
+
+    const responseTime = Date.now() - startTime;
+
+    logger.info("Wake endpoint called", {
+      responseTime: `${responseTime}ms`,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.json({
+      status: "awake",
+      message: "Service is warmed up and ready",
+      timestamp: new Date().toISOString(),
+      responseTime: `${responseTime}ms`,
+      environment: process.env.NODE_ENV || "development",
+      version: "1.0.0",
+    });
+  } catch (error) {
+    logger.error("Wake endpoint error", { error: error.message });
+    res.status(503).json({
+      status: "warming_up",
+      message: "Service is starting up, please retry in a moment",
+      error: error.message,
+    });
+  }
+});
+
 // Root endpoint
 app.get("/", (req, res) => {
   res.json({
@@ -74,6 +107,7 @@ app.get("/", (req, res) => {
     endpoints: {
       chat: "/api/chat",
       health: "/api/health/check",
+      wake: "/api/wake", // Add this line
     },
     documentation: "/api/docs",
   });
@@ -88,6 +122,7 @@ app.use("*", (req, res) => {
       "GET /",
       "POST /api/chat/ask",
       "GET /api/health/check",
+      "GET /api/wake", // Add this line
     ],
   });
 });
