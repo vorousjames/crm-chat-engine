@@ -1,145 +1,152 @@
 const weaviate = require("weaviate-ts-client").default;
-const { SentenceTransformer } = require("@xenova/transformers");
+const logger = require("./logger");
 
 class WeaviateService {
   constructor() {
-    this.client = weaviate.client({
-      scheme: process.env.WEAVIATE_URL?.startsWith("https") ? "https" : "http",
-      host:
-        process.env.WEAVIATE_URL?.replace(/^https?:\/\//, "") ||
-        "localhost:8080",
-      apiKey: process.env.WEAVIATE_API_KEY
-        ? new weaviate.ApiKey(process.env.WEAVIATE_API_KEY)
-        : undefined,
-      timeout: {
-        query: 30000,
-        insert: 30000,
-      },
-    });
-
-    this.embeddingModel = null;
-    this.initEmbeddingModel();
+    this.client = this.initWeaviateClient();
+    // Remove the embedding model initialization - let Weaviate handle it
+    logger.info("WeaviateService initialized successfully");
   }
 
-  async initEmbeddingModel() {
-    try {
-      // Use the same model as your indexer
-      const modelName = process.env.EMBEDDING_MODEL || "all-MiniLM-L6-v2";
-      console.log(`Loading embedding model: ${modelName}`);
-      this.embeddingModel = await SentenceTransformer.from_pretrained(
-        `Xenova/${modelName}`
-      );
-      console.log("Embedding model loaded successfully!");
-    } catch (error) {
-      console.error("Failed to load embedding model:", error);
-    }
-  }
+  initWeaviateClient() {
+    const weaviateUrl = process.env.WEAVIATE_URL || "http://localhost:8080";
+    const weaviateApiKey = process.env.WEAVIATE_API_KEY;
 
-  async generateEmbedding(text) {
-    if (!this.embeddingModel) {
-      throw new Error("Embedding model not initialized");
-    }
-
-    try {
-      const output = await this.embeddingModel(text, {
-        pooling: "mean",
-        normalize: true,
+    if (
+      weaviateApiKey &&
+      weaviateApiKey !== "your-actual-weaviate-api-key-here"
+    ) {
+      return weaviate.client({
+        scheme: "http",
+        host: weaviateUrl.replace("http://", "").replace("https://", ""),
+        apiKey: new weaviate.ApiKey(weaviateApiKey),
       });
-      return Array.from(output.data);
-    } catch (error) {
-      console.error("Embedding generation failed:", error);
-      throw error;
+    } else {
+      return weaviate.client({
+        scheme: "http",
+        host: weaviateUrl.replace("http://", "").replace("https://", ""),
+      });
     }
   }
 
   async searchFeatures(query, limit = 5) {
     try {
-      const embedding = await this.generateEmbedding(query);
+      logger.debug("Searching for user workflows", { query, limit });
 
+      // Use Weaviate's built-in text search instead of generating embeddings
       const result = await this.client.graphql
         .get()
         .withClassName("AppFeature")
         .withFields([
-          "content",
           "featureDescription",
           "userBenefit",
           "featureType",
-          "relatedFeatures",
           "userActions",
           "inputs",
           "outputs",
-          "businessLogic",
           "actualWorkflow",
-          "filePath",
-          "functionName",
-          "contentHash",
+          "userType",
+          "uiComponents",
+          "keywords",
           "_additional { certainty distance }",
         ])
-        .withNearVector({
-          vector: embedding,
-          certainty: 0.7,
+        .withNearText({
+          concepts: [query],
+          certainty: 0.6,
         })
         .withLimit(limit)
         .do();
 
-      const features = result.data.Get.AppFeature || [];
+      const features = result?.data?.Get?.AppFeature || [];
 
-      // Add score for compatibility with test file
+      logger.debug(`Found ${features.length} relevant workflows`);
+
       return features.map((feature) => ({
-        ...feature,
-        score: feature._additional?.certainty || 0,
+        featureDescription: feature.featureDescription,
+        userBenefit: feature.userBenefit,
+        featureType: feature.featureType,
+        userActions: feature.userActions,
+        inputs: feature.inputs,
+        outputs: feature.outputs,
+        actualWorkflow: feature.actualWorkflow,
+        userType: feature.userType,
+        uiComponents: feature.uiComponents,
+        keywords: feature.keywords,
+        score: feature._additional?.certainty || 0.7,
       }));
     } catch (error) {
-      console.error("Feature search error:", error);
-      return [];
+      logger.error("Feature search failed", { error: error.message });
+      throw error;
     }
   }
 
-  async getFeatureCount() {
+  async getFeatureTypes() {
     try {
       const result = await this.client.graphql
         .aggregate()
         .withClassName("AppFeature")
-        .withFields("meta { count }")
+        .withFields("featureType { count value }")
         .do();
 
-      return result.data.Aggregate.AppFeature[0]?.meta?.count || 0;
+      const aggregations = result?.data?.Aggregate?.AppFeature || [];
+      return aggregations[0]?.featureType?.map((item) => item.value) || [];
     } catch (error) {
-      console.error("Count query error:", error);
-      return 0;
-    }
-  }
-
-  async getSampleFeatures(limit = 5) {
-    try {
-      const result = await this.client.graphql
-        .get()
-        .withClassName("AppFeature")
-        .withFields([
-          "featureDescription",
-          "featureType",
-          "functionName",
-          "filePath",
-          "userBenefit",
-        ])
-        .withLimit(limit)
-        .do();
-
-      return result.data.Get.AppFeature || [];
-    } catch (error) {
-      console.error("Sample query error:", error);
+      logger.error("Failed to get feature types", { error: error.message });
       return [];
     }
   }
 
-  async testConnection() {
+  async getSuggestedQuestions() {
     try {
-      const meta = await this.client.misc.metaGetter().do();
-      console.log(`✅ Connected to Weaviate version: ${meta.version}`);
-      return true;
+      // Get a sample of different workflow types
+      const result = await this.client.graphql
+        .get()
+        .withClassName("AppFeature")
+        .withFields(["keywords", "featureType", "userType"])
+        .withLimit(10)
+        .do();
+
+      const features = result?.data?.Get?.AppFeature || [];
+
+      // Generate questions based on keywords and workflow types
+      const questions = [];
+
+      features.forEach((feature) => {
+        const keywords =
+          feature.keywords?.split(",").map((k) => k.trim()) || [];
+        const userType = feature.userType;
+        const featureType = feature.featureType;
+
+        // Generate contextual questions
+        if (featureType === "customer_estimate_request") {
+          questions.push(
+            "How do I get an estimate?",
+            "How do I request a quote?"
+          );
+        } else if (featureType === "staff_lead_management") {
+          questions.push(
+            "How do I manage leads?",
+            "How do I track customer inquiries?"
+          );
+        } else if (featureType === "service_area_discovery") {
+          questions.push(
+            "Do you serve my area?",
+            "What locations do you cover?"
+          );
+        }
+      });
+
+      return [...new Set(questions)]; // Remove duplicates
     } catch (error) {
-      console.error("❌ Weaviate connection failed:", error);
-      return false;
+      logger.error("Failed to get suggested questions", {
+        error: error.message,
+      });
+      return [
+        "How do I get an estimate?",
+        "How do I manage leads?",
+        "Do you serve my area?",
+        "How do I add team members?",
+      ];
     }
   }
 }
