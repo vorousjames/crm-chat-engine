@@ -17,7 +17,9 @@ function getWeaviateService() {
       weaviateService = new WeaviateService();
       logger.info("WeaviateService initialized successfully");
     } catch (error) {
-      logger.error("Failed to initialize WeaviateService", { error: error.message });
+      logger.error("Failed to initialize WeaviateService", {
+        error: error.message,
+      });
       throw new Error("Search service initialization failed");
     }
   }
@@ -30,7 +32,9 @@ function getInferenceService() {
       inferenceService = new InferenceService();
       logger.info("InferenceService initialized successfully");
     } catch (error) {
-      logger.error("Failed to initialize InferenceService", { error: error.message });
+      logger.error("Failed to initialize InferenceService", {
+        error: error.message,
+      });
       throw new Error("AI service initialization failed");
     }
   }
