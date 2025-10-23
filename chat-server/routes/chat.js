@@ -72,53 +72,60 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
       requestId: req.id,
     });
 
-    // Step 1: Search for relevant app features
-    logger.debug("Searching for relevant features...");
+    // Step 1: Search for relevant user workflows
+    logger.debug("Searching for relevant user workflows...");
     const weaviateServiceInstance = getWeaviateService();
-    const relevantFeatures = await weaviateServiceInstance.searchFeatures(
+    const relevantWorkflows = await weaviateServiceInstance.searchFeatures(
       message,
       maxResults
     );
 
-    if (!relevantFeatures || relevantFeatures.length === 0) {
-      logger.warn("No relevant features found", { message });
+    if (!relevantWorkflows || relevantWorkflows.length === 0) {
+      logger.warn("No relevant workflows found", { message });
       return res.json({
         response:
-          "I'd be happy to help! However, I couldn't find specific features related to your question. Could you try rephrasing or ask about a specific part of the app you're interested in?",
+          "I'd be happy to help! However, I couldn't find specific information about that feature. You can ask about things like: getting estimates, managing leads, checking service areas, or using the admin dashboard. What would you like to know about?",
         confidence: 0.1,
         sources: [],
         processingTime: Date.now() - startTime,
       });
     }
 
-    // Step 2: Prepare context for AI
-    const context = relevantFeatures.map((feature) => ({
-      description: feature.featureDescription,
-      benefit: feature.userBenefit,
-      actions: feature.userActions,
-      related: feature.relatedFeatures,
-    }));
+    // Step 2: Build user-focused context for AI
+    let contextText = "Here's what users can do in the application:\n\n";
 
-    logger.debug(`Found ${relevantFeatures.length} relevant features`);
+    relevantWorkflows.forEach((workflow, index) => {
+      contextText += `${index + 1}. ${workflow.featureDescription}\n`;
+      contextText += `   • User type: ${workflow.userType}\n`;
+      contextText += `   • How to do it: ${workflow.userActions}\n`;
+      contextText += `   • What you provide: ${workflow.inputs}\n`;
+      contextText += `   • What you get: ${workflow.outputs}\n`;
+      contextText += `   • Interface elements: ${workflow.uiComponents}\n`;
+      contextText += `   • User benefit: ${workflow.userBenefit}\n\n`;
+    });
 
-    // Step 3: Generate AI response
+    logger.debug(`Found ${relevantWorkflows.length} relevant workflows`);
+
+    // Step 3: Generate AI response with user-focused prompt
     logger.debug("Generating AI response...");
     const inferenceServiceInstance = getInferenceService();
     const aiResponse = await inferenceServiceInstance.generateResponse({
       message,
-      context: context,
+      context: contextText,
       conversationId,
       userId,
     });
 
-    // Step 4: Format response
+    // Step 4: Format response with workflow information
     const response = {
       response: aiResponse.response,
       confidence: aiResponse.confidence || 0.8,
-      sources: relevantFeatures.map((feature) => ({
-        type: feature.featureType,
-        description: feature.featureDescription,
-        relevanceScore: feature.score || 0.8,
+      sources: relevantWorkflows.map((workflow) => ({
+        type: workflow.featureType,
+        description: workflow.featureDescription,
+        userType: workflow.userType,
+        workflow: workflow.actualWorkflow,
+        relevanceScore: workflow.score || 0.8,
       })),
       conversationId: conversationId || generateConversationId(),
       processingTime: Date.now() - startTime,
@@ -128,7 +135,8 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
     logger.info("Chat request completed", {
       processingTime: response.processingTime,
       confidence: response.confidence,
-      sourcesFound: response.sources.length,
+      workflowsFound: response.sources.length,
+      workflowTypes: response.sources.map((s) => s.type),
     });
 
     res.json(response);
@@ -164,29 +172,31 @@ router.get(
   }
 );
 
-// Get available feature types
+// Get available workflow types (updated for user workflows)
 router.get("/features/types", validateApiKey, async (req, res, next) => {
   try {
     const weaviateServiceInstance = getWeaviateService();
-    const featureTypes = await weaviateServiceInstance.getFeatureTypes();
+    const workflowTypes = await weaviateServiceInstance.getFeatureTypes();
 
     res.json({
-      featureTypes,
-      total: featureTypes.length,
+      workflowTypes,
+      total: workflowTypes.length,
       examples: {
-        authentication: "How do I log in?",
-        data_management: "Can I edit my information?",
-        search_filter: "How do I find something?",
-        reporting: "Can I export my data?",
+        customer_estimate_request:
+          "How do I get an estimate for concrete work?",
+        staff_lead_management: "How do I manage customer leads?",
+        service_area_discovery: "Do you serve Cleveland?",
+        staff_team_management: "How do I add team members?",
+        marketing_page_creation: "How do I create marketing pages?",
       },
     });
   } catch (error) {
-    logger.error("Failed to get feature types", { error: error.message });
+    logger.error("Failed to get workflow types", { error: error.message });
     next(error);
   }
 });
 
-// Suggest questions based on available features
+// Suggest questions based on available user workflows
 router.get("/suggestions", validateApiKey, async (req, res, next) => {
   try {
     const weaviateServiceInstance = getWeaviateService();
@@ -194,13 +204,28 @@ router.get("/suggestions", validateApiKey, async (req, res, next) => {
 
     res.json({
       suggestions: suggestions || [
-        "How do I log into my account?",
-        "Can I update my profile information?",
-        "How do I search for information?",
-        "Is there a way to export my data?",
-        "What can I do on the main dashboard?",
+        "How do I get an estimate for concrete work?",
+        "How do I request demolition services?",
+        "How do I manage customer leads?",
+        "Do you serve my area?",
+        "How do I add new team members?",
+        "How do I create marketing pages?",
+        "How do I track project revenue?",
+        "What can customers do on the website?",
       ],
-      total: suggestions?.length || 5,
+      total: suggestions?.length || 8,
+      categories: {
+        "For Customers": [
+          "How do I get an estimate?",
+          "Do you serve my area?",
+          "What services do you offer?",
+        ],
+        "For Staff": [
+          "How do I manage leads?",
+          "How do I add team members?",
+          "How do I create marketing pages?",
+        ],
+      },
     });
   } catch (error) {
     logger.error("Failed to get suggestions", { error: error.message });

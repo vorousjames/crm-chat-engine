@@ -11,20 +11,35 @@ class InferenceService {
 
   async generateResponse({ message, context, conversationId, userId }) {
     try {
-      if (this.useLocalInference) {
-        return await this.generateLocalResponse({ message, context });
-      } else {
-        return await this.generateRunpodResponse({ message, context });
-      }
-    } catch (error) {
-      logger.error("Inference generation failed", { error: error.message });
+      // Updated user-focused prompt
+      const prompt = `You are a helpful assistant for a construction business CRM system. Your job is to help users understand what they can do in the application.
 
-      // Fallback to simple response
-      return {
-        response: this.generateFallbackResponse(message, context),
-        confidence: 0.3,
-        source: "fallback",
+IMPORTANT GUIDELINES:
+- Explain things from the user's perspective (what they see and do)
+- Use simple, non-technical language
+- Focus on step-by-step instructions for using the interface
+- Don't mention code, functions, or technical implementation
+- Be specific about buttons to click, forms to fill, and pages to visit
+- Address the user directly with "you can" and "you should"
+
+Context about available user workflows:
+${context}
+
+User's question: ${message}
+
+Provide a helpful response that explains what the user can do in the interface:`;
+
+      const payload = {
+        input: {
+          message: prompt,
+          max_length: 400,
+          temperature: 0.3,
+        },
       };
+
+      // ...rest of your existing RunPod API call code...
+    } catch (error) {
+      // ...existing error handling...
     }
   }
 
