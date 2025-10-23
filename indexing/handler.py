@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 import re
 
-# Load environment variables
-load_dotenv()
+# Load environment variables - will be overridden in main for production
+load_dotenv('.env')
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,16 +22,28 @@ class AppFeatureIndexer:
         weaviate_url = os.getenv('WEAVIATE_URL', 'http://localhost:8080')
         weaviate_api_key = os.getenv('WEAVIATE_API_KEY')
         
-        if weaviate_api_key:
-            # Production: Use API key authentication
+        if weaviate_api_key and weaviate_api_key != 'your-actual-weaviate-api-key-here':
+            # Production: Use API key authentication for Weaviate Cloud (same as test_connection.py)
+            import weaviate.auth as wv_auth
+            
             self.weaviate_client = weaviate.Client(
                 url=weaviate_url,
-                auth_client_secret=weaviate.AuthApiKey(api_key=weaviate_api_key)
+                auth_client_secret=wv_auth.AuthApiKey(api_key=weaviate_api_key),
+                timeout_config=(10, 30)  # connection timeout, read timeout
             )
         else:
             # Development: No authentication
             self.weaviate_client = weaviate.Client(url=weaviate_url)
         
+        # Test connection
+        try:
+            logger.info(f"Testing connection to: {weaviate_url}")
+            meta = self.weaviate_client.get_meta()
+            logger.info(f"✅ Connected to Weaviate version: {meta.get('version', 'Unknown')}")
+        except Exception as e:
+            logger.error(f"❌ Weaviate connection failed: {e}")
+            raise
+
         # Load local embedding model
         embedding_model_name = os.getenv('EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
         logger.info(f"Loading embedding model: {embedding_model_name}")
@@ -562,6 +574,23 @@ class AppFeatureIndexer:
 
 if __name__ == "__main__":
     try:
+        # Load production environment explicitly (override any .env values)
+        load_dotenv('.env.production', override=True)
+        
+        # Debug environment loading
+        weaviate_url = os.getenv('WEAVIATE_URL')
+        weaviate_api_key = os.getenv('WEAVIATE_API_KEY')
+        codebase_path = os.getenv('CODEBASE_PATH')
+        
+        logger.info(f"🔗 Using Weaviate URL: {weaviate_url}")
+        logger.info(f"🔑 API key loaded: {'Yes' if weaviate_api_key else 'No'}")
+        logger.info(f"📂 Codebase path: {codebase_path}")
+        
+        if not weaviate_url or not weaviate_api_key or not codebase_path:
+            logger.error("❌ Missing required environment variables")
+            logger.error("Please ensure .env.production has WEAVIATE_URL, WEAVIATE_API_KEY, and CODEBASE_PATH")
+            exit(1)
+        
         indexer = AppFeatureIndexer()
         indexer.index_codebase()
     except KeyboardInterrupt:
