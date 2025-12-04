@@ -180,6 +180,7 @@ class WeaviateService {
         .get()
         .withClassName("AppFeature")
         .withFields([
+          // Core informational fields (always present)
           "featureDescription",
           "userBenefit",
           "featureType",
@@ -190,19 +191,30 @@ class WeaviateService {
           "userType",
           "uiComponents",
           "keywords",
+          
+          // Mode capabilities (tells you ask vs agent)
           "supportedModes",
-          "canExecuteAction",
-          "apiEndpoint",
+          "askModeCapabilities",
+          "agentModeCapabilities",
+          
+          // Agent execution fields (corrected names matching schema)
+          "isActionable",              // Was: canExecuteAction
+          "primaryApiEndpoint",        // Was: apiEndpoint
           "httpMethod",
           "requestSchema",
           "responseSchema",
-          "requiredPermissions",
+          "authenticationRequired",
+          "permissionsRequired",       // Was: requiredPermissions
           "safetyLevel",
           "requiresConfirmation",
-          "rateLimit",
-          "errorScenarios",
-          "successCriteria",
-          "relatedSchemaFile",
+          "sideEffects",
+          "rateLimits",                // Was: rateLimit (singular)
+          "errorHandling",             // Was: errorScenarios
+          "businessRules",
+          "agentInstructions",
+          "serviceContext",
+          "exampleExecution",
+          
           "_additional { certainty distance }",
         ])
         .withNearVector({
@@ -219,6 +231,7 @@ class WeaviateService {
       );
 
       return features.map((feature) => ({
+        // Core fields
         featureDescription:
           feature.featureDescription || "No description available",
         userBenefit: feature.userBenefit || "User benefit not specified",
@@ -231,20 +244,29 @@ class WeaviateService {
         uiComponents: feature.uiComponents || "No components specified",
         keywords: feature.keywords || "No keywords",
         score: feature._additional?.certainty || 0.7,
-        // Dual-mode agent fields
-        supportedModes: feature.supportedModes || ["ask"],
-        canExecuteAction: feature.canExecuteAction || false,
-        apiEndpoint: feature.apiEndpoint || null,
+        
+        // Mode capabilities (parse JSON strings)
+        supportedModes: this.parseJSON(feature.supportedModes, ["ask"]),
+        askModeCapabilities: this.parseJSON(feature.askModeCapabilities, {}),
+        agentModeCapabilities: this.parseJSON(feature.agentModeCapabilities, {}),
+        
+        // Agent execution fields (CORRECTED field names)
+        isActionable: feature.isActionable || false,
+        primaryApiEndpoint: feature.primaryApiEndpoint || null,
         httpMethod: feature.httpMethod || null,
-        requestSchema: feature.requestSchema || null,
-        responseSchema: feature.responseSchema || null,
-        requiredPermissions: feature.requiredPermissions || [],
+        requestSchema: this.parseJSON(feature.requestSchema, null),
+        responseSchema: this.parseJSON(feature.responseSchema, null),
+        authenticationRequired: feature.authenticationRequired || false,
+        permissionsRequired: this.parseJSON(feature.permissionsRequired, []),
         safetyLevel: feature.safetyLevel || "unknown",
-        requiresConfirmation: feature.requiresConfirmation || true,
-        rateLimit: feature.rateLimit || null,
-        errorScenarios: feature.errorScenarios || null,
-        successCriteria: feature.successCriteria || null,
-        relatedSchemaFile: feature.relatedSchemaFile || null,
+        requiresConfirmation: feature.requiresConfirmation !== false, // Default to true
+        sideEffects: this.parseJSON(feature.sideEffects, []),
+        rateLimits: this.parseJSON(feature.rateLimits, null),
+        errorHandling: this.parseJSON(feature.errorHandling, null),
+        businessRules: this.parseJSON(feature.businessRules, {}),
+        agentInstructions: this.parseJSON(feature.agentInstructions, {}),
+        serviceContext: this.parseJSON(feature.serviceContext, {}),
+        exampleExecution: this.parseJSON(feature.exampleExecution, {}),
       }));
     } catch (error) {
       logger.error("Feature search failed", {
@@ -315,6 +337,18 @@ class WeaviateService {
         "Do you serve my area?",
         "How do I add team members?",
       ];
+    }
+  }
+
+  // Helper method to safely parse JSON strings from Weaviate
+  parseJSON(jsonString, defaultValue = null) {
+    if (!jsonString) return defaultValue;
+    if (typeof jsonString === 'object') return jsonString; // Already parsed
+    try {
+      return JSON.parse(jsonString);
+    } catch (error) {
+      logger.warn("Failed to parse JSON field", { jsonString, error: error.message });
+      return defaultValue;
     }
   }
 }
