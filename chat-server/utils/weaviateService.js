@@ -191,30 +191,30 @@ class WeaviateService {
           "userType",
           "uiComponents",
           "keywords",
-          
+
           // Mode capabilities (tells you ask vs agent)
           "supportedModes",
           "askModeCapabilities",
           "agentModeCapabilities",
-          
+
           // Agent execution fields (corrected names matching schema)
-          "isActionable",              // Was: canExecuteAction
-          "primaryApiEndpoint",        // Was: apiEndpoint
+          "isActionable", // Was: canExecuteAction
+          "primaryApiEndpoint", // Was: apiEndpoint
           "httpMethod",
           "requestSchema",
           "responseSchema",
           "authenticationRequired",
-          "permissionsRequired",       // Was: requiredPermissions
+          "permissionsRequired", // Was: requiredPermissions
           "safetyLevel",
           "requiresConfirmation",
           "sideEffects",
-          "rateLimits",                // Was: rateLimit (singular)
-          "errorHandling",             // Was: errorScenarios
+          "rateLimits", // Was: rateLimit (singular)
+          "errorHandling", // Was: errorScenarios
           "businessRules",
           "agentInstructions",
           "serviceContext",
           "exampleExecution",
-          
+
           "_additional { certainty distance }",
         ])
         .withNearVector({
@@ -244,12 +244,15 @@ class WeaviateService {
         uiComponents: feature.uiComponents || "No components specified",
         keywords: feature.keywords || "No keywords",
         score: feature._additional?.certainty || 0.7,
-        
+
         // Mode capabilities (parse JSON strings)
         supportedModes: this.parseJSON(feature.supportedModes, ["ask"]),
         askModeCapabilities: this.parseJSON(feature.askModeCapabilities, {}),
-        agentModeCapabilities: this.parseJSON(feature.agentModeCapabilities, {}),
-        
+        agentModeCapabilities: this.parseJSON(
+          feature.agentModeCapabilities,
+          {}
+        ),
+
         // Agent execution fields (CORRECTED field names)
         isActionable: feature.isActionable || false,
         primaryApiEndpoint: feature.primaryApiEndpoint || null,
@@ -343,11 +346,14 @@ class WeaviateService {
   // Helper method to safely parse JSON strings from Weaviate
   parseJSON(jsonString, defaultValue = null) {
     if (!jsonString) return defaultValue;
-    if (typeof jsonString === 'object') return jsonString; // Already parsed
+    if (typeof jsonString === "object") return jsonString; // Already parsed
     try {
       return JSON.parse(jsonString);
     } catch (error) {
-      logger.warn("Failed to parse JSON field", { jsonString, error: error.message });
+      logger.warn("Failed to parse JSON field", {
+        jsonString,
+        error: error.message,
+      });
       return defaultValue;
     }
   }
