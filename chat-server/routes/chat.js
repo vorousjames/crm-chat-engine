@@ -67,7 +67,7 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
     const startTime = Date.now();
 
     // Get mode from query parameter (defaults to 'ask' if not specified)
-    const mode = req.query.mode === 'agent' ? 'agent' : 'ask';
+    const mode = req.query.mode === "agent" ? "agent" : "ask";
 
     // Validate request body
     const { error, value } = chatRequestSchema.validate(req.body);
@@ -155,14 +155,21 @@ async function handleAgentMode(
     );
 
     if (agentFeatures.length === 0) {
-      logger.info("No agent-capable features found, providing informational response");
+      logger.info(
+        "No agent-capable features found, providing informational response"
+      );
       return res.json({
         mode: "agent",
         detectedIntent: "no_action_available",
         confidence: 0.5,
-        message: "I understand you want to perform an action, but this feature doesn't support automated execution yet. Let me explain how to do it manually.",
+        message:
+          "I understand you want to perform an action, but this feature doesn't support automated execution yet. Let me explain how to do it manually.",
         fallbackToAsk: true,
-        askModeResponse: await generateAskResponse(message, relevantWorkflows, conversationId),
+        askModeResponse: await generateAskResponse(
+          message,
+          relevantWorkflows,
+          conversationId
+        ),
         processingTime: Date.now() - startTime,
       });
     }
@@ -186,7 +193,7 @@ async function handleAgentMode(
     logger.info("Parameter extraction complete", {
       parametersExtracted: Object.keys(extraction.parameters).length,
       missingRequired: extraction.missingRequired.length,
-      confidence: extraction.confidence
+      confidence: extraction.confidence,
     });
 
     // Determine next step based on extraction results
@@ -195,13 +202,16 @@ async function handleAgentMode(
 
     if (extraction.needsMoreInfo) {
       nextStep = "parameter_collection";
-      userMessage = parameterExtractorInstance.generateCollectionPrompt(
-        extraction.missingRequired,
-        bestFeature
-      ) || userMessage;
+      userMessage =
+        parameterExtractorInstance.generateCollectionPrompt(
+          extraction.missingRequired,
+          bestFeature
+        ) || userMessage;
     } else if (bestFeature.requiresConfirmation) {
       nextStep = "confirmation_required";
-      userMessage = `I can ${bestFeature.featureDescription.toLowerCase()} with the following details:\n\n${formatParametersForConfirmation(extraction.parameters)}\n\nWould you like me to proceed?`;
+      userMessage = `I can ${bestFeature.featureDescription.toLowerCase()} with the following details:\n\n${formatParametersForConfirmation(
+        extraction.parameters
+      )}\n\nWould you like me to proceed?`;
     }
 
     // Return agent action info with extracted parameters
@@ -228,20 +238,21 @@ async function handleAgentMode(
         parameters: extraction.parameters,
         missingRequired: extraction.missingRequired,
         confidence: extraction.confidence,
-        validationErrors: extraction.validationErrors || []
+        validationErrors: extraction.validationErrors || [],
       },
       message: userMessage,
       nextStep: nextStep,
       // Client-side execution instructions
       clientInstructions: {
-        method: "Execute this action by making an API call with your user's authentication token",
+        method:
+          "Execute this action by making an API call with your user's authentication token",
         endpoint: bestFeature.apiEndpoint,
         httpMethod: bestFeature.httpMethod,
         body: extraction.parameters,
         headers: {
           "Content-Type": "application/json",
-          "Authorization": "Bearer {USER_TOKEN}" // Client must provide user's token
-        }
+          Authorization: "Bearer {USER_TOKEN}", // Client must provide user's token
+        },
       },
       processingTime: Date.now() - startTime,
       timestamp: new Date().toISOString(),
@@ -326,11 +337,11 @@ async function handleAskMode(
 // Helper to generate agent-appropriate message
 function generateAgentMessage(feature) {
   const action = feature.featureDescription.toLowerCase();
-  
+
   if (feature.requiresConfirmation) {
     return `I can help you ${action}. This is a ${feature.safetyLevel} action that requires confirmation. Would you like me to proceed?`;
   }
-  
+
   return `I can help you ${action}. What information do you need to provide?`;
 }
 
@@ -338,25 +349,25 @@ function generateAgentMessage(feature) {
 function formatParametersForConfirmation(parameters) {
   return Object.entries(parameters)
     .map(([key, value]) => `• **${key}**: ${value}`)
-    .join('\n');
+    .join("\n");
 }
 
 // Helper to generate ask mode response (for agent fallback)
 async function generateAskResponse(message, workflows, conversationId) {
   const inferenceServiceInstance = getInferenceService();
-  
+
   let contextText = "Here's how to do this:\n\n";
   workflows.forEach((workflow, index) => {
     contextText += `${index + 1}. ${workflow.featureDescription}\n`;
     contextText += `   Steps: ${workflow.userActions}\n\n`;
   });
-  
+
   const aiResponse = await inferenceServiceInstance.generateResponse({
     message,
     context: contextText,
     conversationId,
   });
-  
+
   return aiResponse.response;
 }
 
@@ -450,29 +461,35 @@ router.get("/health", validateApiKey, async (req, res, next) => {
     const startTime = Date.now();
     const weaviateServiceInstance = getWeaviateService();
     const inferenceServiceInstance = getInferenceService();
-    
+
     // Test Weaviate connection
     const weaviateConnected = await weaviateServiceInstance.testConnection();
-    
+
     // Test a simple search to verify indexing
     let featuresIndexed = false;
     let featureCount = 0;
     if (weaviateConnected) {
       try {
-        const testResult = await weaviateServiceInstance.searchFeatures("test", 1);
+        const testResult = await weaviateServiceInstance.searchFeatures(
+          "test",
+          1
+        );
         featuresIndexed = testResult.length > 0;
         featureCount = testResult.length;
       } catch (error) {
-        logger.warn("Health check: feature search failed", { error: error.message });
+        logger.warn("Health check: feature search failed", {
+          error: error.message,
+        });
       }
     }
-    
+
     // Check embedding model status
     const embeddingModelReady = weaviateServiceInstance.embeddingModelReady;
-    
+
     const responseTime = Date.now() - startTime;
-    const allHealthy = weaviateConnected && featuresIndexed && embeddingModelReady;
-    
+    const allHealthy =
+      weaviateConnected && featuresIndexed && embeddingModelReady;
+
     res.status(allHealthy ? 200 : 503).json({
       status: allHealthy ? "healthy" : "degraded",
       services: {
@@ -480,20 +497,20 @@ router.get("/health", validateApiKey, async (req, res, next) => {
           connected: weaviateConnected,
           features_indexed: featuresIndexed,
           feature_count: featureCount,
-          status: weaviateConnected ? "operational" : "unavailable"
+          status: weaviateConnected ? "operational" : "unavailable",
         },
         embedding_model: {
           ready: embeddingModelReady,
-          status: embeddingModelReady ? "operational" : "loading"
+          status: embeddingModelReady ? "operational" : "loading",
         },
         inference: {
           available: inferenceServiceInstance !== null,
-          status: "operational"
-        }
+          status: "operational",
+        },
       },
       environment: process.env.NODE_ENV || "development",
       responseTime: `${responseTime}ms`,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     logger.error("Health check failed", { error: error.message });
@@ -503,9 +520,9 @@ router.get("/health", validateApiKey, async (req, res, next) => {
       services: {
         weaviate: { connected: false, status: "error" },
         embedding_model: { ready: false, status: "error" },
-        inference: { available: false, status: "error" }
+        inference: { available: false, status: "error" },
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 });

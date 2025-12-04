@@ -18,22 +18,22 @@ class ParameterExtractor {
   async extractParameters(message, feature) {
     try {
       const requestSchema = JSON.parse(feature.requestSchema || "{}");
-      
+
       if (!requestSchema.properties) {
-        logger.warn("No schema properties to extract", { 
-          featureType: feature.featureType 
+        logger.warn("No schema properties to extract", {
+          featureType: feature.featureType,
         });
         return {
           parameters: {},
           missingRequired: [],
           confidence: 0,
-          needsMoreInfo: false
+          needsMoreInfo: false,
         };
       }
 
       // Build extraction prompt for the LLM
       const extractionPrompt = this.buildExtractionPrompt(
-        message, 
+        message,
         requestSchema,
         feature
       );
@@ -42,7 +42,7 @@ class ParameterExtractor {
       const response = await this.inferenceService.generateResponse({
         message: extractionPrompt,
         context: "",
-        maxLength: 200
+        maxLength: 200,
       });
 
       // Parse the LLM response to extract structured parameters
@@ -61,7 +61,7 @@ class ParameterExtractor {
         featureType: feature.featureType,
         extractedCount: Object.keys(extracted.parameters).length,
         missingRequired: validation.missingRequired.length,
-        confidence: extracted.confidence
+        confidence: extracted.confidence,
       });
 
       return {
@@ -69,21 +69,20 @@ class ParameterExtractor {
         missingRequired: validation.missingRequired,
         confidence: extracted.confidence,
         needsMoreInfo: validation.missingRequired.length > 0,
-        validationErrors: validation.errors
+        validationErrors: validation.errors,
       };
-
     } catch (error) {
       logger.error("Parameter extraction failed", {
         error: error.message,
-        featureType: feature.featureType
+        featureType: feature.featureType,
       });
-      
+
       return {
         parameters: {},
         missingRequired: [],
         confidence: 0,
         needsMoreInfo: true,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -106,8 +105,10 @@ Extract these fields:
       const isRequired = required.includes(fieldName);
       const type = fieldSchema.type || "string";
       const description = fieldSchema.description || "";
-      
-      prompt += `- ${fieldName} (${type}${isRequired ? ", REQUIRED" : ", optional"}): ${description}\n`;
+
+      prompt += `- ${fieldName} (${type}${
+        isRequired ? ", REQUIRED" : ", optional"
+      }): ${description}\n`;
     });
 
     prompt += `
@@ -126,28 +127,30 @@ JSON response:`;
     try {
       // Try to find JSON in the response
       const jsonMatch = response.match(/\{[\s\S]*\}/);
-      
+
       if (!jsonMatch) {
         logger.warn("No JSON found in extraction response", { response });
         return {
           parameters: {},
-          confidence: 0.3
+          confidence: 0.3,
         };
       }
 
       const extracted = JSON.parse(jsonMatch[0]);
-      
+
       // Calculate confidence based on how many fields were extracted
       const properties = schema.properties || {};
       const required = schema.required || [];
       const extractedCount = Object.keys(extracted).length;
       const requiredCount = required.length;
       const totalCount = Object.keys(properties).length;
-      
+
       let confidence = 0.5; // base confidence
-      
+
       if (requiredCount > 0) {
-        const requiredExtracted = required.filter(r => extracted[r] !== undefined).length;
+        const requiredExtracted = required.filter(
+          (r) => extracted[r] !== undefined
+        ).length;
         confidence = requiredExtracted / requiredCount;
       } else if (totalCount > 0) {
         confidence = Math.min(extractedCount / totalCount, 1.0);
@@ -155,18 +158,17 @@ JSON response:`;
 
       return {
         parameters: extracted,
-        confidence: Math.max(confidence, 0.5) // Minimum 0.5 if we got valid JSON
+        confidence: Math.max(confidence, 0.5), // Minimum 0.5 if we got valid JSON
       };
-
     } catch (error) {
       logger.error("Failed to parse extraction response", {
         error: error.message,
-        response
+        response,
       });
-      
+
       return {
         parameters: {},
-        confidence: 0.2
+        confidence: 0.2,
       };
     }
   }
@@ -181,12 +183,17 @@ JSON response:`;
     const missingRequired = [];
 
     // Check required fields
-    required.forEach(fieldName => {
-      if (parameters[fieldName] === undefined || parameters[fieldName] === null || parameters[fieldName] === "") {
+    required.forEach((fieldName) => {
+      if (
+        parameters[fieldName] === undefined ||
+        parameters[fieldName] === null ||
+        parameters[fieldName] === ""
+      ) {
         missingRequired.push({
           field: fieldName,
           type: properties[fieldName]?.type || "string",
-          description: properties[fieldName]?.description || `The ${fieldName} field`
+          description:
+            properties[fieldName]?.description || `The ${fieldName} field`,
         });
       }
     });
@@ -220,7 +227,7 @@ JSON response:`;
     return {
       isValid: missingRequired.length === 0 && errors.length === 0,
       missingRequired,
-      errors
+      errors,
     };
   }
 
@@ -232,9 +239,11 @@ JSON response:`;
       return null;
     }
 
-    const fieldsList = missingRequired.map(field => {
-      return `• **${field.field}**: ${field.description}`;
-    }).join('\n');
+    const fieldsList = missingRequired
+      .map((field) => {
+        return `• **${field.field}**: ${field.description}`;
+      })
+      .join("\n");
 
     return `To ${feature.featureDescription.toLowerCase()}, I need the following information:\n\n${fieldsList}\n\nPlease provide these details.`;
   }
