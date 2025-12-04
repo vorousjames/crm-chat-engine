@@ -18,27 +18,37 @@ logger = logging.getLogger(__name__)
 
 class CRMFeatureIndexer:
     def __init__(self):
-        # Weaviate setup (keep your existing code)
+        # Weaviate setup with improved connection handling
         weaviate_url = os.getenv('WEAVIATE_URL', 'http://localhost:8080')
         weaviate_api_key = os.getenv('WEAVIATE_API_KEY')
         
+        logger.info(f"🔌 Connecting to Weaviate at: {weaviate_url}")
+        
         if weaviate_api_key and weaviate_api_key != 'your-actual-weaviate-api-key-here':
             import weaviate.auth as wv_auth
+            # Use additional_headers for Weaviate Cloud compatibility
             self.weaviate_client = weaviate.Client(
                 url=weaviate_url,
                 auth_client_secret=wv_auth.AuthApiKey(api_key=weaviate_api_key),
-                timeout_config=(10, 30)
+                timeout_config=(10, 60),
+                startup_period=None,  # Skip startup check for cloud instances
+                additional_headers={"X-Weaviate-Api-Key": weaviate_api_key}
             )
         else:
-            self.weaviate_client = weaviate.Client(url=weaviate_url)
+            self.weaviate_client = weaviate.Client(
+                url=weaviate_url,
+                timeout_config=(10, 60),
+                startup_period=None
+            )
         
         # Test connection
         try:
-            logger.info(f"Testing connection to: {weaviate_url}")
+            logger.info("Testing connection to Weaviate...")
             meta = self.weaviate_client.get_meta()
             logger.info(f"✅ Connected to Weaviate version: {meta.get('version', 'Unknown')}")
         except Exception as e:
             logger.error(f"❌ Weaviate connection failed: {e}")
+            logger.error(f"Make sure your Weaviate Cloud instance is running and the URL/API key are correct")
             raise
 
         # Load embedding model
@@ -147,11 +157,12 @@ class CRMFeatureIndexer:
         self.setup_schema()
     
     def setup_schema(self):
-        """Create user-workflow-focused schema"""
+        """Create dual-mode schema for both 'ask' and 'agent' capabilities"""
         schema = {
             "class": "AppFeature",
-            "description": "User-facing workflows and features in the CRM system",
+            "description": "Dual-mode features supporting both informational queries and agent actions",
             "properties": [
+                # Original informational properties (for 'ask' mode)
                 {
                     "name": "content",
                     "dataType": ["text"],
@@ -216,6 +227,105 @@ class CRMFeatureIndexer:
                     "name": "contentHash",
                     "dataType": ["string"],
                     "description": "Hash for duplicate detection"
+                },
+                
+                # NEW: Mode-specific capabilities
+                {
+                    "name": "supportedModes",
+                    "dataType": ["text"],
+                    "description": "JSON array: which modes support this feature ['ask', 'agent', 'both']"
+                },
+                {
+                    "name": "askModeCapabilities",
+                    "dataType": ["text"],
+                    "description": "JSON object: what the feature can explain/describe in ask mode"
+                },
+                {
+                    "name": "agentModeCapabilities", 
+                    "dataType": ["text"],
+                    "description": "JSON object: what actions the agent can execute"
+                },
+                
+                # Agent execution properties
+                {
+                    "name": "isActionable",
+                    "dataType": ["boolean"],
+                    "description": "Whether this workflow can be executed by an agent"
+                },
+                {
+                    "name": "primaryApiEndpoint",
+                    "dataType": ["string"], 
+                    "description": "Main API endpoint for agent execution"
+                },
+                {
+                    "name": "httpMethod",
+                    "dataType": ["string"],
+                    "description": "HTTP method for the primary action"
+                },
+                {
+                    "name": "requestSchema",
+                    "dataType": ["text"],
+                    "description": "JSON schema defining required parameters for agent execution"
+                },
+                {
+                    "name": "responseSchema", 
+                    "dataType": ["text"],
+                    "description": "JSON schema of expected API response"
+                },
+                {
+                    "name": "authenticationRequired",
+                    "dataType": ["boolean"],
+                    "description": "Whether authentication is required for agent execution"
+                },
+                {
+                    "name": "permissionsRequired",
+                    "dataType": ["text"],
+                    "description": "JSON array of required user roles/permissions"
+                },
+                {
+                    "name": "safetyLevel",
+                    "dataType": ["string"],
+                    "description": "Safety classification: safe, caution, restricted, dangerous"
+                },
+                {
+                    "name": "requiresConfirmation",
+                    "dataType": ["boolean"],
+                    "description": "Whether agent should ask for confirmation before executing"
+                },
+                {
+                    "name": "sideEffects",
+                    "dataType": ["text"],
+                    "description": "JSON array describing what changes when this action executes"
+                },
+                {
+                    "name": "rateLimits",
+                    "dataType": ["text"],
+                    "description": "JSON object with execution limits"
+                },
+                {
+                    "name": "errorHandling",
+                    "dataType": ["text"],
+                    "description": "JSON object describing error scenarios and responses"
+                },
+                {
+                    "name": "businessRules",
+                    "dataType": ["text"],
+                    "description": "JSON object with business logic and validation rules"
+                },
+                {
+                    "name": "agentInstructions",
+                    "dataType": ["text"],
+                    "description": "JSON object with detailed agent execution instructions"
+                },
+                {
+                    "name": "serviceContext",
+                    "dataType": ["text"],
+                    "description": "JSON object with business context and service information"
+                },
+                {
+                    "name": "exampleExecution",
+                    "dataType": ["text"],
+                    "description": "JSON object showing sample agent execution with parameters"
                 }
             ],
             "vectorizer": "none"
@@ -231,7 +341,8 @@ class CRMFeatureIndexer:
             
             # Create new schema
             self.weaviate_client.schema.create_class(schema)
-            logger.info("Created user-workflow-focused schema successfully")
+            logger.info("✅ Created dual-mode (ASK + AGENT) schema successfully!")
+            logger.info("📋 Schema supports both informational queries and executable actions")
         except Exception as e:
             logger.error(f"Schema creation error: {e}")
             raise
@@ -354,9 +465,213 @@ class CRMFeatureIndexer:
             logger.error(f"Embedding generation error: {e}")
             return []
     
+    def discover_agent_schemas(self) -> Dict[str, Dict]:
+        """Discover and load agent schema files from the SaaS codebase"""
+        agent_schemas = {}
+        
+        # Look for agent-schemas directory and .json files
+        schema_pattern = "**/agent-schemas/**/*.json"
+        
+        logger.info("🤖 Discovering agent schema files in your SaaS codebase...")
+        
+        for schema_file in self.codebase_path.glob(schema_pattern):
+            try:
+                with open(schema_file, 'r', encoding='utf-8') as f:
+                    schema_data = json.load(f)
+                
+                # Use endpoint as key (e.g., "api_lead")
+                endpoint = schema_data.get('endpoint', '').replace('/api/', '').replace('/', '_')
+                key = f"api_{endpoint}" if endpoint else schema_file.stem
+                
+                agent_schemas[key] = {
+                    'schema_data': schema_data,
+                    'file_path': str(schema_file.relative_to(self.codebase_path)),
+                    'last_modified': schema_file.stat().st_mtime
+                }
+                
+                logger.info(f"✅ Loaded agent schema: {key} ({schema_data.get('description', 'No description')})")
+                
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to load schema {schema_file}: {e}")
+        
+        logger.info(f"🤖 Discovered {len(agent_schemas)} agent schemas")
+        return agent_schemas
+    
+    def create_dual_mode_features_from_schemas(self, agent_schemas: Dict[str, Dict]) -> List[Dict]:
+        """Create features that support both ask and agent modes"""
+        chunks = []
+        
+        for schema_key, schema_info in agent_schemas.items():
+            schema_data = schema_info['schema_data']
+            
+            # Extract business context
+            service_context = schema_data.get('service_context', {})
+            workflow_context = schema_data.get('workflow_context', {})
+            agent_instructions = schema_data.get('agent_instructions', {})
+            
+            for method, method_data in schema_data.get('methods', {}).items():
+                # Determine supported modes
+                is_agent_capable = method_data.get('agent_capability', False)
+                supported_modes = []
+                
+                if is_agent_capable:
+                    supported_modes.append('agent')
+                
+                # Always support ask mode for informational queries
+                supported_modes.append('ask')
+                
+                # Create ask mode capabilities
+                ask_capabilities = {
+                    'can_explain_workflow': True,
+                    'can_describe_process': True,
+                    'can_provide_examples': True,
+                    'can_explain_requirements': True,
+                    'explanation_topics': [
+                        f"How to {workflow_context.get('user_goal', '').lower()}",
+                        f"What information is needed",
+                        f"What happens after {method_data.get('action_type', '')}",
+                        f"Who can {method_data.get('action_type', '')}"
+                    ]
+                }
+                
+                # Create agent capabilities (if applicable)
+                agent_capabilities = {}
+                if is_agent_capable:
+                    agent_capabilities = {
+                        'can_execute': True,
+                        'actions': [method_data.get('action_type')],
+                        'information_gathering': agent_instructions.get('required_information_gathering', []),
+                        'conversation_flow': agent_instructions.get('conversation_flow', {}),
+                        'when_to_use': agent_instructions.get('when_to_use', [])
+                    }
+                
+                # Create rich dual-mode feature chunk
+                feature_chunk = {
+                    # Core informational data (for ask mode)
+                    'content': json.dumps(schema_data, indent=2)[:1000],
+                    'featureDescription': f"{method_data.get('description', '')} - {workflow_context.get('user_goal', '')}",
+                    'userBenefit': workflow_context.get('business_value', ''),
+                    'featureType': f"{method_data.get('action_type', '')}_{schema_key}",
+                    'userActions': ' → '.join(workflow_context.get('user_journey', [])),
+                    'userType': 'dual_mode_feature',
+                    
+                    # Standard workflow fields
+                    'inputs': ', '.join([prop for prop in method_data.get('request_schema', {}).get('required', [])]),
+                    'outputs': f"In ask mode: Detailed explanation. In agent mode: {method_data.get('description', '')}",
+                    'actualWorkflow': ' → '.join(workflow_context.get('user_journey', [])),
+                    'uiComponents': 'Chat interface supporting both ask and agent modes',
+                    'keywords': f"{schema_data.get('endpoint', '')}, {method_data.get('action_type', '')}, {', '.join(service_context.get('services', []))}, help, how to, execute, create, request",
+                    
+                    # Mode-specific capabilities
+                    'supportedModes': json.dumps(supported_modes),
+                    'askModeCapabilities': json.dumps(ask_capabilities),
+                    'agentModeCapabilities': json.dumps(agent_capabilities),
+                    
+                    # Agent execution metadata (for agent mode)
+                    'isActionable': is_agent_capable,
+                    'primaryApiEndpoint': schema_data.get('endpoint', '') if is_agent_capable else '',
+                    'httpMethod': method.upper() if is_agent_capable else '',
+                    'requestSchema': json.dumps(method_data.get('request_schema', {})) if is_agent_capable else '{}',
+                    'responseSchema': json.dumps(method_data.get('response_schema', {})) if is_agent_capable else '{}',
+                    'authenticationRequired': method_data.get('authentication_required', False),
+                    'permissionsRequired': json.dumps(method_data.get('permissions_required', [])),
+                    'safetyLevel': method_data.get('safety_level', 'safe'),
+                    'requiresConfirmation': method_data.get('requires_confirmation', False),
+                    'sideEffects': json.dumps(method_data.get('side_effects', [])),
+                    'rateLimits': json.dumps(method_data.get('rate_limits', {})),
+                    'errorHandling': json.dumps(method_data.get('error_scenarios', {})),
+                    'businessRules': json.dumps(method_data.get('business_rules', {})),
+                    'agentInstructions': json.dumps(agent_instructions),
+                    'serviceContext': json.dumps(service_context),
+                    'exampleExecution': json.dumps(method_data.get('example_execution', {})),
+                    
+                    'filePath': schema_info['file_path'],
+                    'contentHash': hashlib.md5(json.dumps(schema_data).encode()).hexdigest()
+                }
+                chunks.append(feature_chunk)
+        
+        return chunks
+    
+    def generate_dual_mode_embedding(self, feature_data: Dict) -> List[float]:
+        """Generate embeddings that work for both ask and agent modes"""
+        try:
+            supported_modes = json.loads(feature_data.get('supportedModes', '["ask"]'))
+            
+            # Base embedding text (works for both modes)
+            embedding_text = f"""
+            Feature: {feature_data.get('featureDescription', '')}
+            User Goal: {feature_data.get('featureDescription', '')}
+            What Users Do: {feature_data.get('userActions', '')}
+            User Benefits: {feature_data.get('userBenefit', '')}
+            User Type: {feature_data.get('userType', '')}
+            Keywords: {feature_data.get('keywords', '')}
+            """
+            
+            # Add ask mode specific terms
+            if 'ask' in supported_modes:
+                ask_caps = json.loads(feature_data.get('askModeCapabilities', '{}'))
+                embedding_text += f"""
+                
+                Ask Mode: User can ask questions about this feature
+                Can Explain: {', '.join(ask_caps.get('explanation_topics', []))}
+                Provides Information: workflow steps, requirements, examples, process explanation
+                """
+            
+            # Add agent mode specific terms
+            if 'agent' in supported_modes and feature_data.get('isActionable'):
+                agent_caps = json.loads(feature_data.get('agentModeCapabilities', '{}'))
+                embedding_text += f"""
+                
+                Agent Mode: Agent can execute actions for this feature
+                Agent Can Execute: {', '.join(agent_caps.get('actions', []))}
+                API Endpoint: {feature_data.get('primaryApiEndpoint', '')}
+                Automated Workflow: create, execute, perform, do this for me
+                Agent Actions: {', '.join(agent_caps.get('actions', []))}
+                """
+            
+            # Limit length
+            if len(embedding_text) > 5000:
+                embedding_text = embedding_text[:5000] + "..."
+            
+            embedding = self.embedding_model.encode(embedding_text, convert_to_tensor=False)
+            return embedding.tolist()
+        except Exception as e:
+            logger.error(f"Dual-mode embedding generation error: {e}")
+            return []
+    
     def index_codebase(self):
-        """Index codebase focusing on user workflows rather than code functions"""
-        # Target the most important user-facing files
+        """Index codebase with dual-mode (ask + agent) capabilities"""
+        logger.info(f"Starting DUAL-MODE indexing: {self.codebase_path}")
+        logger.info("🔄 Creating unified index for both ASK and AGENT modes...")
+        
+        # Step 1: Index agent-capable features from schemas
+        logger.info("\n" + "="*60)
+        logger.info("PHASE 1: Discovering Agent-Capable Features")
+        logger.info("="*60)
+        agent_schemas = self.discover_agent_schemas()
+        dual_mode_chunks = self.create_dual_mode_features_from_schemas(agent_schemas)
+        
+        indexed_dual_features = 0
+        for chunk in dual_mode_chunks:
+            embedding = self.generate_dual_mode_embedding(chunk)
+            if embedding:
+                try:
+                    self.weaviate_client.data_object.create(
+                        data_object=chunk,
+                        class_name="AppFeature",
+                        vector=embedding
+                    )
+                    indexed_dual_features += 1
+                    modes = json.loads(chunk.get('supportedModes', '[]'))
+                    logger.info(f"✅ Indexed dual-mode: {chunk.get('featureType')} (modes: {', '.join(modes)})")
+                except Exception as e:
+                    logger.error(f"Error storing dual-mode feature: {e}")
+        
+        # Step 2: Index ask-only features from workflow patterns
+        logger.info("\n" + "="*60)
+        logger.info("PHASE 2: Indexing Ask-Only Workflow Features")
+        logger.info("="*60)
+        
         target_patterns = [
             # React components
             '**/components/**/*.tsx',
@@ -384,14 +699,11 @@ class CRMFeatureIndexer:
         
         skip_dirs = {
             '.git', 'node_modules', '.next', 'dist', 'build', 
-            '.vscode', '__pycache__', 'logs', 'coverage'
+            '.vscode', '__pycache__', 'logs', 'coverage', 'agent-schemas'
         }
         
         total_files = 0
-        indexed_workflows = 0
-        
-        logger.info(f"Starting USER-WORKFLOW indexing: {self.codebase_path}")
-        logger.info("Focusing on actual user experiences in your CRM...")
+        indexed_ask_features = 0
         
         for pattern in target_patterns:
             for file_path in self.codebase_path.glob(pattern):
@@ -405,7 +717,6 @@ class CRMFeatureIndexer:
                 try:
                     total_files += 1
                     relative_path = file_path.relative_to(self.codebase_path)
-                    logger.info(f"Analyzing workflow file [{total_files}]: {relative_path}")
                     
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         content = f.read()
@@ -413,12 +724,27 @@ class CRMFeatureIndexer:
                     if not content.strip() or len(content) > 50000:
                         continue
                     
-                    # Extract user workflow features
+                    # Extract ask-only workflow features
                     workflow_chunks = self.extract_ui_workflow_features(file_path, content)
                     
                     for chunk in workflow_chunks:
-                        # Generate user-focused embedding
-                        embedding = self.generate_workflow_embedding(chunk)
+                        # Enhance with ask-mode metadata
+                        chunk['supportedModes'] = json.dumps(['ask'])
+                        chunk['askModeCapabilities'] = json.dumps({
+                            'can_explain_workflow': True,
+                            'can_describe_process': True,
+                            'can_provide_examples': True,
+                            'explanation_topics': [
+                                f"How to {chunk.get('featureDescription', '').lower()}",
+                                "What steps are involved",
+                                "What information is needed"
+                            ]
+                        })
+                        chunk['agentModeCapabilities'] = json.dumps({})
+                        chunk['isActionable'] = False
+                        
+                        # Generate ask-focused embedding
+                        embedding = self.generate_dual_mode_embedding(chunk)
                         
                         if embedding:
                             try:
@@ -427,23 +753,26 @@ class CRMFeatureIndexer:
                                     class_name="AppFeature", 
                                     vector=embedding
                                 )
-                                indexed_workflows += 1
+                                indexed_ask_features += 1
                                 
-                                logger.info(f"✅ Indexed user workflow: {chunk['featureType']} - {chunk['userType']}")
-                            
                             except Exception as e:
-                                logger.error(f"Error storing workflow from {relative_path}: {e}")
+                                logger.error(f"Error storing ask-mode feature from {relative_path}: {e}")
                 
                 except Exception as e:
                     logger.error(f"Error processing {file_path}: {e}")
         
+        logger.info("\n" + "="*60)
+        logger.info("🎉 DUAL-MODE INDEXING COMPLETE!")
         logger.info("="*60)
-        logger.info("🎉 USER-WORKFLOW INDEXING COMPLETE!")
         logger.info(f"📁 Files analyzed: {total_files}")
-        logger.info(f"🎯 User workflows indexed: {indexed_workflows}")
+        logger.info(f"🤖 Agent-capable features: {indexed_dual_features}")
+        logger.info(f"❓ Ask-only features: {indexed_ask_features}")
+        logger.info(f"📊 Total features indexed: {indexed_dual_features + indexed_ask_features}")
         logger.info("="*60)
-        logger.info("Your chatbot now understands actual USER EXPERIENCES!")
-        logger.info("Users can ask: 'How do I get an estimate?' or 'How do I manage leads?'")
+        logger.info("💬 ASK MODE: 'How do I create a lead?' → Explains the process")
+        logger.info("🤖 AGENT MODE: 'Create a lead for John Doe' → Executes the action")
+        logger.info("🔄 SEAMLESS: Same business context, different interaction modes")
+        logger.info("="*60)
 
 if __name__ == "__main__":
     try:

@@ -28,7 +28,15 @@ echo "📂 Codebase: $CODEBASE_PATH"
 echo "🌐 Weaviate: $WEAVIATE_URL"
 echo ""
 
+# Activate virtual environment
+if [[ -d "venv" ]]; then
+    echo "🔧 Activating virtual environment..."
+    source venv/bin/activate
+else
+    echo "⚠️  No virtual environment found. Using system Python..."
+fi
+
 # Run indexing
-python3 handler.py
+python handler.py
 
 echo "✅ Indexing complete!"

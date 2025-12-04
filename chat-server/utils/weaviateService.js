@@ -139,6 +139,19 @@ class WeaviateService {
           "userType",
           "uiComponents",
           "keywords",
+          "supportedModes",
+          "canExecuteAction",
+          "apiEndpoint",
+          "httpMethod",
+          "requestSchema",
+          "responseSchema",
+          "requiredPermissions",
+          "safetyLevel",
+          "requiresConfirmation",
+          "rateLimit",
+          "errorScenarios",
+          "successCriteria",
+          "relatedSchemaFile",
           "_additional { certainty distance }",
         ])
         .withNearVector({
@@ -167,6 +180,20 @@ class WeaviateService {
         uiComponents: feature.uiComponents || "No components specified",
         keywords: feature.keywords || "No keywords",
         score: feature._additional?.certainty || 0.7,
+        // Dual-mode agent fields
+        supportedModes: feature.supportedModes || ["ask"],
+        canExecuteAction: feature.canExecuteAction || false,
+        apiEndpoint: feature.apiEndpoint || null,
+        httpMethod: feature.httpMethod || null,
+        requestSchema: feature.requestSchema || null,
+        responseSchema: feature.responseSchema || null,
+        requiredPermissions: feature.requiredPermissions || [],
+        safetyLevel: feature.safetyLevel || "unknown",
+        requiresConfirmation: feature.requiresConfirmation || true,
+        rateLimit: feature.rateLimit || null,
+        errorScenarios: feature.errorScenarios || null,
+        successCriteria: feature.successCriteria || null,
+        relatedSchemaFile: feature.relatedSchemaFile || null,
       }));
     } catch (error) {
       logger.error("Feature search failed", {
