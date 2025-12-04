@@ -93,7 +93,8 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
     const weaviateServiceInstance = getWeaviateService();
     const relevantWorkflows = await weaviateServiceInstance.searchFeatures(
       message,
-      maxResults
+      maxResults,
+      true // Only return actionable features for agent mode
     );
 
     if (!relevantWorkflows || relevantWorkflows.length === 0) {
@@ -151,7 +152,7 @@ async function handleAgentMode(
   try {
     // Filter for agent-capable features
     const agentFeatures = relevantWorkflows.filter(
-      (workflow) => workflow.canExecuteAction === true
+      (workflow) => workflow.isActionable === true
     );
 
     if (agentFeatures.length === 0) {

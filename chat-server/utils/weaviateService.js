@@ -158,7 +158,7 @@ class WeaviateService {
     }
   }
 
-  async searchFeatures(query, limit = 5) {
+  async searchFeatures(query, limit = 5, requireActionable = false) {
     try {
       // Test connection first with retry
       const isConnected = await this.testConnection();
@@ -176,7 +176,7 @@ class WeaviateService {
       logger.debug("Embedding generated successfully");
 
       // Use nearVector instead of nearText
-      const result = await this.client.graphql
+      let queryBuilder = await this.client.graphql
         .get()
         .withClassName("AppFeature")
         .withFields([
@@ -220,9 +220,18 @@ class WeaviateService {
         .withNearVector({
           vector: queryEmbedding,
           certainty: 0.6,
-        })
-        .withLimit(limit)
-        .do();
+        });
+
+      // Filter only actionable features if requested
+      if (requireActionable) {
+        queryBuilder = queryBuilder.withWhere({
+          path: ["isActionable"],
+          operator: "Equal",
+          valueBoolean: true,
+        });
+      }
+
+      const result = await queryBuilder.withLimit(limit).do();
 
       const features = result?.data?.Get?.AppFeature || [];
 
