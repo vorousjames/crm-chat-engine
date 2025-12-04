@@ -6,10 +6,16 @@ class WeaviateService {
     this.client = this.initWeaviateClient();
     this.embedder = null;
     this.embeddingModelReady = false;
+    this.connectionVerified = false;
 
     // Initialize embedding model asynchronously but don't wait
     this.initEmbeddingModel().catch((error) => {
       logger.error("Failed to initialize embedding model:", error);
+    });
+
+    // Initialize Weaviate connection with retry
+    this.initializeWithRetry().catch((error) => {
+      logger.error("Failed to verify Weaviate connection:", error);
     });
 
     logger.info("WeaviateService initialized successfully");
@@ -27,6 +33,9 @@ class WeaviateService {
           scheme: "https",
           host: weaviateUrl.replace("https://", ""),
           apiKey: new weaviate.ApiKey(weaviateApiKey),
+          headers: {
+            "X-Weaviate-Api-Key": weaviateApiKey,
+          },
         });
       } else {
         return weaviate.client({
@@ -41,6 +50,39 @@ class WeaviateService {
     } catch (error) {
       logger.error("Failed to initialize Weaviate client:", error);
       throw error;
+    }
+  }
+
+  async initializeWithRetry(maxRetries = 3, delayMs = 5000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await this.client.misc.metaGetter().do();
+        logger.info(
+          `✅ Connected to Weaviate (attempt ${attempt}/${maxRetries})`,
+          {
+            version: result.version,
+            hostname: result.hostname,
+          }
+        );
+        this.connectionVerified = true;
+        return true;
+      } catch (error) {
+        logger.warn(
+          `⚠️ Weaviate connection attempt ${attempt}/${maxRetries} failed: ${error.message}`
+        );
+
+        if (attempt < maxRetries) {
+          logger.info(`Retrying in ${delayMs / 1000} seconds...`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        } else {
+          logger.error(
+            `❌ Failed to connect to Weaviate after ${maxRetries} attempts`
+          );
+          throw new Error(
+            "Weaviate connection failed - instance may be paused or unreachable"
+          );
+        }
+      }
     }
   }
 
@@ -96,25 +138,34 @@ class WeaviateService {
 
   async testConnection() {
     try {
+      // If we haven't verified connection yet, try to verify now
+      if (!this.connectionVerified) {
+        await this.initializeWithRetry(2, 3000); // Quick retry with 2 attempts
+      }
+
       const meta = await this.client.misc.metaGetter().do();
       logger.info("✅ Weaviate Cloud connection successful", {
         version: meta.version,
       });
+      this.connectionVerified = true;
       return true;
     } catch (error) {
       logger.error("❌ Weaviate Cloud connection failed", {
         error: error.message,
       });
+      this.connectionVerified = false;
       return false;
     }
   }
 
   async searchFeatures(query, limit = 5) {
     try {
-      // Test connection first
+      // Test connection first with retry
       const isConnected = await this.testConnection();
       if (!isConnected) {
-        throw new Error("Weaviate Cloud connection failed");
+        throw new Error(
+          "Search service temporarily unavailable. Weaviate instance may be paused or unreachable. Please try again in 30-60 seconds."
+        );
       }
 
       logger.debug("Searching for user workflows", { query, limit });

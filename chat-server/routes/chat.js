@@ -444,6 +444,72 @@ router.get("/suggestions", validateApiKey, async (req, res, next) => {
   }
 });
 
+// Health check endpoint to test Weaviate connection and service status
+router.get("/health", validateApiKey, async (req, res, next) => {
+  try {
+    const startTime = Date.now();
+    const weaviateServiceInstance = getWeaviateService();
+    const inferenceServiceInstance = getInferenceService();
+    
+    // Test Weaviate connection
+    const weaviateConnected = await weaviateServiceInstance.testConnection();
+    
+    // Test a simple search to verify indexing
+    let featuresIndexed = false;
+    let featureCount = 0;
+    if (weaviateConnected) {
+      try {
+        const testResult = await weaviateServiceInstance.searchFeatures("test", 1);
+        featuresIndexed = testResult.length > 0;
+        featureCount = testResult.length;
+      } catch (error) {
+        logger.warn("Health check: feature search failed", { error: error.message });
+      }
+    }
+    
+    // Check embedding model status
+    const embeddingModelReady = weaviateServiceInstance.embeddingModelReady;
+    
+    const responseTime = Date.now() - startTime;
+    const allHealthy = weaviateConnected && featuresIndexed && embeddingModelReady;
+    
+    res.status(allHealthy ? 200 : 503).json({
+      status: allHealthy ? "healthy" : "degraded",
+      services: {
+        weaviate: {
+          connected: weaviateConnected,
+          features_indexed: featuresIndexed,
+          feature_count: featureCount,
+          status: weaviateConnected ? "operational" : "unavailable"
+        },
+        embedding_model: {
+          ready: embeddingModelReady,
+          status: embeddingModelReady ? "operational" : "loading"
+        },
+        inference: {
+          available: inferenceServiceInstance !== null,
+          status: "operational"
+        }
+      },
+      environment: process.env.NODE_ENV || "development",
+      responseTime: `${responseTime}ms`,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error("Health check failed", { error: error.message });
+    res.status(503).json({
+      status: "unhealthy",
+      error: error.message,
+      services: {
+        weaviate: { connected: false, status: "error" },
+        embedding_model: { ready: false, status: "error" },
+        inference: { available: false, status: "error" }
+      },
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Helper function to generate conversation ID
 function generateConversationId() {
   return "conv_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
