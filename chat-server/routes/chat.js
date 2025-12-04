@@ -4,12 +4,14 @@ const router = express.Router();
 
 const WeaviateService = require("../utils/weaviateService");
 const InferenceService = require("../utils/inferenceService");
+const ParameterExtractor = require("../utils/parameterExtractor");
 const logger = require("../utils/logger");
 const { validateApiKey } = require("../middleware/auth");
 
 // Initialize services lazily to handle connection errors gracefully
 let weaviateService = null;
 let inferenceService = null;
+let parameterExtractor = null;
 
 function getWeaviateService() {
   if (!weaviateService) {
@@ -41,20 +43,33 @@ function getInferenceService() {
   return inferenceService;
 }
 
+function getParameterExtractor() {
+  if (!parameterExtractor) {
+    const inferenceServiceInstance = getInferenceService();
+    parameterExtractor = new ParameterExtractor(inferenceServiceInstance);
+    logger.info("ParameterExtractor initialized successfully");
+  }
+  return parameterExtractor;
+}
+
 // Request validation schemas
 const chatRequestSchema = Joi.object({
   message: Joi.string().required().min(1).max(1000).trim(),
   conversationId: Joi.string().optional().uuid(),
   userId: Joi.string().optional().alphanum().max(50),
   maxResults: Joi.number().optional().min(1).max(10).default(5),
+  context: Joi.object().optional(), // User context for agent mode (permissions, auth, etc.)
 });
 
-// Main chat endpoint
+// Main chat endpoint - mode determined by query param
 router.post("/ask", validateApiKey, async (req, res, next) => {
   try {
     const startTime = Date.now();
 
-    // Validate request
+    // Get mode from query parameter (defaults to 'ask' if not specified)
+    const mode = req.query.mode === 'agent' ? 'agent' : 'ask';
+
+    // Validate request body
     const { error, value } = chatRequestSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
@@ -63,17 +78,18 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
       });
     }
 
-    const { message, conversationId, userId, maxResults } = value;
+    const { message, conversationId, userId, maxResults, context } = value;
 
     logger.info("Processing chat request", {
       message: message.substring(0, 100),
+      mode,
       conversationId,
       userId,
       requestId: req.id,
     });
 
-    // Step 1: Search for relevant user workflows
-    logger.debug("Searching for relevant user workflows...");
+    // Step 1: Search for relevant workflows
+    logger.debug("Searching for relevant workflows...");
     const weaviateServiceInstance = getWeaviateService();
     const relevantWorkflows = await weaviateServiceInstance.searchFeatures(
       message,
@@ -83,6 +99,7 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
     if (!relevantWorkflows || relevantWorkflows.length === 0) {
       logger.warn("No relevant workflows found", { message });
       return res.json({
+        mode,
         response:
           "I'd be happy to help! However, I couldn't find specific information about that feature. You can ask about things like: getting estimates, managing leads, checking service areas, or using the admin dashboard. What would you like to know about?",
         confidence: 0.1,
@@ -91,7 +108,164 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
       });
     }
 
-    // Step 2: Build user-focused context for AI
+    // Step 2: Route based on mode from query parameter
+    if (mode === "agent") {
+      return handleAgentMode(
+        message,
+        relevantWorkflows,
+        context,
+        conversationId,
+        startTime,
+        res,
+        next
+      );
+    } else {
+      return handleAskMode(
+        message,
+        relevantWorkflows,
+        conversationId,
+        startTime,
+        res,
+        next
+      );
+    }
+  } catch (error) {
+    logger.error("Chat request failed", {
+      error: error.message,
+      stack: error.stack,
+    });
+    next(error);
+  }
+});
+
+// Agent mode handler - identifies actionable features
+async function handleAgentMode(
+  message,
+  relevantWorkflows,
+  context,
+  conversationId,
+  startTime,
+  res,
+  next
+) {
+  try {
+    // Filter for agent-capable features
+    const agentFeatures = relevantWorkflows.filter(
+      (workflow) => workflow.canExecuteAction === true
+    );
+
+    if (agentFeatures.length === 0) {
+      logger.info("No agent-capable features found, providing informational response");
+      return res.json({
+        mode: "agent",
+        detectedIntent: "no_action_available",
+        confidence: 0.5,
+        message: "I understand you want to perform an action, but this feature doesn't support automated execution yet. Let me explain how to do it manually.",
+        fallbackToAsk: true,
+        askModeResponse: await generateAskResponse(message, relevantWorkflows, conversationId),
+        processingTime: Date.now() - startTime,
+      });
+    }
+
+    // Get the best matching agent feature (highest score)
+    const bestFeature = agentFeatures[0];
+
+    logger.info("Agent feature identified", {
+      featureType: bestFeature.featureType,
+      safetyLevel: bestFeature.safetyLevel,
+      requiresConfirmation: bestFeature.requiresConfirmation,
+    });
+
+    // Extract parameters from the user's message
+    const parameterExtractorInstance = getParameterExtractor();
+    const extraction = await parameterExtractorInstance.extractParameters(
+      message,
+      bestFeature
+    );
+
+    logger.info("Parameter extraction complete", {
+      parametersExtracted: Object.keys(extraction.parameters).length,
+      missingRequired: extraction.missingRequired.length,
+      confidence: extraction.confidence
+    });
+
+    // Determine next step based on extraction results
+    let nextStep = "ready_to_execute";
+    let userMessage = generateAgentMessage(bestFeature);
+
+    if (extraction.needsMoreInfo) {
+      nextStep = "parameter_collection";
+      userMessage = parameterExtractorInstance.generateCollectionPrompt(
+        extraction.missingRequired,
+        bestFeature
+      ) || userMessage;
+    } else if (bestFeature.requiresConfirmation) {
+      nextStep = "confirmation_required";
+      userMessage = `I can ${bestFeature.featureDescription.toLowerCase()} with the following details:\n\n${formatParametersForConfirmation(extraction.parameters)}\n\nWould you like me to proceed?`;
+    }
+
+    // Return agent action info with extracted parameters
+    return res.json({
+      mode: "agent",
+      detectedIntent: "action_available",
+      confidence: bestFeature.score || 0.85,
+      feature: {
+        type: bestFeature.featureType,
+        description: bestFeature.featureDescription,
+        canExecute: true,
+        requiresConfirmation: bestFeature.requiresConfirmation,
+        requiredPermissions: bestFeature.requiredPermissions,
+        safetyLevel: bestFeature.safetyLevel,
+        apiEndpoint: bestFeature.apiEndpoint,
+        httpMethod: bestFeature.httpMethod,
+        requestSchema: bestFeature.requestSchema,
+        responseSchema: bestFeature.responseSchema,
+        errorScenarios: bestFeature.errorScenarios,
+        successCriteria: bestFeature.successCriteria,
+      },
+      // Extracted parameters ready for client to use
+      parameterExtraction: {
+        parameters: extraction.parameters,
+        missingRequired: extraction.missingRequired,
+        confidence: extraction.confidence,
+        validationErrors: extraction.validationErrors || []
+      },
+      message: userMessage,
+      nextStep: nextStep,
+      // Client-side execution instructions
+      clientInstructions: {
+        method: "Execute this action by making an API call with your user's authentication token",
+        endpoint: bestFeature.apiEndpoint,
+        httpMethod: bestFeature.httpMethod,
+        body: extraction.parameters,
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {USER_TOKEN}" // Client must provide user's token
+        }
+      },
+      processingTime: Date.now() - startTime,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error("Agent mode handler failed", {
+      error: error.message,
+      stack: error.stack,
+    });
+    next(error);
+  }
+}
+
+// Ask mode handler - provides informational responses
+async function handleAskMode(
+  message,
+  relevantWorkflows,
+  conversationId,
+  startTime,
+  res,
+  next
+) {
+  try {
+    // Build user-focused context for AI
     let contextText = "Here's what users can do in the application:\n\n";
 
     relevantWorkflows.forEach((workflow, index) => {
@@ -106,18 +280,18 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
 
     logger.debug(`Found ${relevantWorkflows.length} relevant workflows`);
 
-    // Step 3: Generate AI response with user-focused prompt
+    // Generate AI response
     logger.debug("Generating AI response...");
     const inferenceServiceInstance = getInferenceService();
     const aiResponse = await inferenceServiceInstance.generateResponse({
       message,
       context: contextText,
       conversationId,
-      userId,
     });
 
-    // Step 4: Format response with workflow information
+    // Format response
     const response = {
+      mode: "ask",
       response: aiResponse.response,
       confidence: aiResponse.confidence || 0.8,
       sources: relevantWorkflows.map((workflow) => ({
@@ -126,28 +300,65 @@ router.post("/ask", validateApiKey, async (req, res, next) => {
         userType: workflow.userType,
         workflow: workflow.actualWorkflow,
         relevanceScore: workflow.score || 0.8,
+        supportedModes: workflow.supportedModes,
       })),
       conversationId: conversationId || generateConversationId(),
       processingTime: Date.now() - startTime,
       timestamp: new Date().toISOString(),
     };
 
-    logger.info("Chat request completed", {
+    logger.info("Chat request completed (ask mode)", {
       processingTime: response.processingTime,
       confidence: response.confidence,
       workflowsFound: response.sources.length,
-      workflowTypes: response.sources.map((s) => s.type),
     });
 
     res.json(response);
   } catch (error) {
-    logger.error("Chat request failed", {
+    logger.error("Ask mode handler failed", {
       error: error.message,
       stack: error.stack,
     });
     next(error);
   }
-});
+}
+
+// Helper to generate agent-appropriate message
+function generateAgentMessage(feature) {
+  const action = feature.featureDescription.toLowerCase();
+  
+  if (feature.requiresConfirmation) {
+    return `I can help you ${action}. This is a ${feature.safetyLevel} action that requires confirmation. Would you like me to proceed?`;
+  }
+  
+  return `I can help you ${action}. What information do you need to provide?`;
+}
+
+// Helper to format parameters for confirmation
+function formatParametersForConfirmation(parameters) {
+  return Object.entries(parameters)
+    .map(([key, value]) => `• **${key}**: ${value}`)
+    .join('\n');
+}
+
+// Helper to generate ask mode response (for agent fallback)
+async function generateAskResponse(message, workflows, conversationId) {
+  const inferenceServiceInstance = getInferenceService();
+  
+  let contextText = "Here's how to do this:\n\n";
+  workflows.forEach((workflow, index) => {
+    contextText += `${index + 1}. ${workflow.featureDescription}\n`;
+    contextText += `   Steps: ${workflow.userActions}\n\n`;
+  });
+  
+  const aiResponse = await inferenceServiceInstance.generateResponse({
+    message,
+    context: contextText,
+    conversationId,
+  });
+  
+  return aiResponse.response;
+}
 
 // Get conversation history (if implementing conversation memory)
 router.get(
