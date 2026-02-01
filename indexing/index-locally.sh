@@ -5,17 +5,22 @@
 
 set -e
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "🔄 Running local indexing to Weaviate Cloud..."
 
-# Check if .env.production exists
-if [[ ! -f ".env.production" ]]; then
+# Check if .env.production exists in the script's directory
+ENV_FILE="${SCRIPT_DIR}/.env.production"
+if [[ ! -f "$ENV_FILE" ]]; then
     echo "❌ Missing .env.production file"
+    echo "Expected location: $ENV_FILE"
     echo "Copy .env.production.example and update with your values"
     exit 1
 fi
 
 # Load production environment
-export $(grep -v '^#' .env.production | xargs)
+export $(grep -v '^#' "$ENV_FILE" | xargs)
 
 # Check required variables
 if [[ -z "$WEAVIATE_URL" ]] || [[ -z "$WEAVIATE_API_KEY" ]] || [[ -z "$CODEBASE_PATH" ]]; then
@@ -29,12 +34,15 @@ echo "🌐 Weaviate: $WEAVIATE_URL"
 echo ""
 
 # Activate virtual environment
-if [[ -d "venv" ]]; then
+if [[ -d "${SCRIPT_DIR}/venv" ]]; then
     echo "🔧 Activating virtual environment..."
-    source venv/bin/activate
+    source "${SCRIPT_DIR}/venv/bin/activate"
 else
     echo "⚠️  No virtual environment found. Using system Python..."
 fi
+
+# Change to script directory to run handler.py
+cd "$SCRIPT_DIR"
 
 # Run indexing
 python handler.py

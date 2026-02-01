@@ -71,7 +71,7 @@ class CRMFeatureIndexer:
                     'Submit form and receive confirmation',
                     'Wait for staff callback within 24 hours'
                 ],
-                'ui_components': ['EstimateForm.tsx', 'EstimateFooter.tsx', 'EstimateHero.tsx'],
+                'ui_components': ['EstimateForm.tsx', 'EstimateFooter.tsx', 'EstimateHero.tsx', 'LeadsTab.tsx'],
                 'api_endpoints': ['/api/lead (POST)'],
                 'user_inputs': ['Name', 'Phone number', 'Email', 'Property address', 'Service type'],
                 'user_outputs': ['Confirmation message', 'Staff callback', 'Project estimate'],
@@ -133,7 +133,6 @@ class CRMFeatureIndexer:
                 'business_benefit': 'Control who can access sensitive business data',
                 'keywords': ['users', 'team', 'permissions', 'roles', 'admin', 'staff management']
             },
-            
             'marketing_page_creation': {
                 'user_goal': 'Create marketing pages without coding',
                 'user_type': 'staff',
@@ -151,7 +150,59 @@ class CRMFeatureIndexer:
                 'user_outputs': ['Live marketing pages', 'Lead generation forms', 'SEO-optimized content'],
                 'business_benefit': 'Create professional marketing pages quickly without developer',
                 'keywords': ['page builder', 'marketing', 'website', 'content', 'publish', 'landing page']
-            }
+            },
+            'customer_estimate_management': {
+                'user_goal': 'Create, edit, delete, or email estimates for home-service projects for a customer',
+                'user_type': 'staff',
+                'workflow_steps': [
+                    'Access admin dashboard',
+                    'Configure job cost settings in the "Estimates" section of theSystem Settings Tab',
+                    'Optionally configure estimate templates in the "Estimate Templates" section of the System Settings Tab',
+                    'Navigate to Estimates tab',
+                    'Create new estimate with project details',
+                    'Add as many templates or job-costs to the estimate as needed'
+                    'Edit existing estimate',
+                    'Delete estimate',
+                    'Email estimate to customer'
+                ],
+                'ui_components': ['EstimatesTab.tsx', 'EstimatorTab.tsx','EstimatorForm.tsx', 'SendEmailButton.tsx','Calculations.tsx', 'EstimateSectionTemplateModal.tsx', 'EstimateJobCostModal.tsx'],
+                'api_endpoints': ['/api/estimate (GET, POST, PUT, DELETE)'],
+                'user_inputs': ['Project details', 'Customer information', 'Job Costs', 'Estimate Templates', 'Estimate amount', 'Email address'],
+                'user_outputs': ['Created estimate', 'Updated estimate', 'Deleted estimate', 'Email sent'],
+                'business_benefit': 'Provide accurate and professional estimates for home-service projects',
+                'keywords': ['estimates', 'estimate management', 'project details', 'customer information', 'email', 'job costs', 'estimate templates']
+            },
+            'business_analytics_administration': {
+                'user_goal': 'View, understand, and manage business analytics and reporting for revenue, paid ad channels, scheduled-job data, lead data, organic search metrics',
+                'user_type': 'staff',
+                'workflow_steps': [
+                    'Access admin dashboard',
+                    'Navigate to Business Analytics tab',
+                    'Configure analytics settings',
+                ],
+                'ui_components': ['AnalyticsTab.tsx', 'GoogleAdsAnalytics.tsx', 'TotalJobAnalytics.tsx', 'OrganicGoogleAnalytics.tsx', 'WebsiteCallAnalytics.tsx', 'RevenueByServiceChart.tsx', 'RevenueByMonth.tsx', 'LeadsChart.tsx', 'LeadsBysourceChart.tsx', 'JobsByService.tsx', 'LeadsByService.tsx', 'LeadsBySource.tsx'],
+                'business_benefit': 'Provide detailed information on high-level business metrics and KPIs to enhance decision-making and performance tracking',
+                'keywords': ['analytics', 'reporting', 'metrics', 'KPIs', 'revenue', 'paid ad channels', 'scheduled-job data', 'lead data', 'organic search metrics']
+            },
+            'contract_management': {
+                'user_goal': 'Create, edit, delete, or email contracts for home-service projects for a customer',
+                'user_type': 'staff',
+                'workflow_steps': [
+                    'Access admin dashboard',
+                    'Navigate to Contracts tab',
+                    'Create new contract with project details',
+                    'Edit existing contract',
+                    'Delete contract (if not completed)',
+                    'Email contract to customer',
+                    'View audit trail'
+                ],
+                'ui_components': ['ContractsTab.tsx', 'ContractDocument.tsx', 'ContractSetupStage.tsx', 'ContractReviewStage.tsx', 'ContractSigningEmail.tsx', 'ContractFieldEditorStage.tsx', 'ContractFieldsPanel.tsx', 'ContractCompletionEmail.tsx', 'ContractConfirmationEmail.tsx', 'ContractProgressBar.tsx'],
+                'api_endpoints': ['/api/contract (GET, POST, PUT, DELETE)'],
+                'user_inputs': ['Project details', 'Customer information', 'Contract amount', 'Email address'],
+                'user_outputs': ['Created contract', 'Updated contract', 'Deleted contract', 'Email sent'],
+                'business_benefit': 'Provide accurate and professional contracts for home-service projects',
+                'keywords': ['contracts', 'contract management', 'project details', 'customer information', 'email', 'contract amount']
+            },
         }
         
         self.setup_schema()
@@ -364,8 +415,8 @@ class CRMFeatureIndexer:
                     'userBenefit': workflow['business_benefit'],
                     'featureType': workflow_name,
                     'userActions': ' → '.join(workflow['workflow_steps']),
-                    'inputs': ', '.join(workflow['user_inputs']),
-                    'outputs': ', '.join(workflow['user_outputs']),
+                    'inputs': ', '.join(workflow.get('user_inputs', [])),
+                    'outputs': ', '.join(workflow.get('user_outputs', [])),
                     'actualWorkflow': ' → '.join(workflow['workflow_steps']),
                     'userType': workflow['user_type'],
                     'uiComponents': ', '.join(workflow['ui_components']),
@@ -390,12 +441,18 @@ class CRMFeatureIndexer:
             
             # Check UI components mentioned in workflow
             for component in workflow['ui_components']:
-                component_lower = component.lower()
+                component_lower = component.lower().replace('.tsx', '').replace('.ts', '')
+                # Check if component name (without extension) appears in filename or path
                 if component_lower in file_name or component_lower in relative_path:
                     confidence += 0.4
+                # Also check for partial matches (e.g., "EstimatesTab" matches "estimates")
+                component_base = component_lower.split('tab')[0].split('modal')[0].split('form')[0].strip()
+                if component_base and len(component_base) > 4:
+                    if component_base in file_name or component_base in relative_path:
+                        confidence += 0.2
             
             # Check API endpoints
-            for endpoint in workflow['api_endpoints']:
+            for endpoint in workflow.get('api_endpoints', []):
                 if endpoint.replace('/api/', '').replace(' (', '').replace(')', '') in relative_path:
                     confidence += 0.3
             
@@ -432,6 +489,30 @@ class CRMFeatureIndexer:
                 if 'page' in file_name and 'builder' in relative_path:
                     confidence += 0.5
                 if any(name in file_content for name in ['page', 'builder', 'dynamic']):
+                    confidence += 0.2
+
+            elif workflow_name == 'customer_estimate_management':
+                if any(name in file_name for name in ['estimate', 'estimator']):
+                    confidence += 0.4
+                if 'estimate' in relative_path:
+                    confidence += 0.3
+                if any(name in file_content for name in ['estimate', 'job cost', 'template']):
+                    confidence += 0.2
+
+            elif workflow_name == 'business_analytics_administration':
+                if any(name in file_name for name in ['analytics', 'chart', 'revenue']):
+                    confidence += 0.4
+                if 'analytics' in relative_path:
+                    confidence += 0.3
+                if any(name in file_content for name in ['analytics', 'metrics', 'kpi', 'revenue']):
+                    confidence += 0.2
+
+            elif workflow_name == 'contract_management':
+                if any(name in file_name for name in ['contract', 'document']):
+                    confidence += 0.4
+                if 'contract' in relative_path:
+                    confidence += 0.3
+                if any(name in file_content for name in ['contract', 'signing', 'completion']):
                     confidence += 0.2
             
             if confidence > 0:

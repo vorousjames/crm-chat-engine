@@ -305,6 +305,7 @@ async function handleAskMode(
     const response = {
       mode: "ask",
       response: aiResponse.response,
+      followUpQuestions: aiResponse.followUpQuestions || [],
       confidence: aiResponse.confidence || 0.8,
       sources: relevantWorkflows.map((workflow) => ({
         type: workflow.featureType,

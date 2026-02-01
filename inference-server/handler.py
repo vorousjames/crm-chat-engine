@@ -107,12 +107,14 @@ def handler(event):
         # Format prompt for code explanation
         prompt = f"""You are a helpful assistant that explains code and app features to non-technical users in simple terms.
 
+CRITICAL: Keep your response to 250 characters or less. Be concise and direct.
+
 Context from codebase:
 {context}
 
 User Question: {message}
 
-Please provide a clear, simple explanation without technical jargon:"""
+Provide a clear, simple, concise explanation (250 characters max) without technical jargon. Include descriptions of pages and UI elements like buttons, text, and other interactive elements if relevant."""
 
         # Tokenize input
         inputs = tokenizer.encode(

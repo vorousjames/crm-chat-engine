@@ -11,28 +11,36 @@ class InferenceService {
 
   async generateResponse({ message, context, conversationId, userId }) {
     try {
-      // Updated user-focused prompt
+      // Calculate context size to determine if follow-ups are needed
+      const contextSize = context.length;
+      const workflowCount = (context.match(/\d+\./g) || []).length;
+      const needsFollowUps = contextSize > 1000 || workflowCount > 2;
+
+      // Updated user-focused prompt with length constraint
       const prompt = `You are a helpful assistant for a construction business CRM system. Your job is to help users understand what they can do in the application.
 
-IMPORTANT GUIDELINES:
+CRITICAL RESPONSE RULES:
+- Keep your response to 250 characters or less
+- Be concise and direct - get to the point immediately
 - Explain things from the user's perspective (what they see and do)
 - Use simple, non-technical language
 - Focus on step-by-step instructions for using the interface
 - Don't mention code, functions, or technical implementation
 - Be specific about buttons to click, forms to fill, and pages to visit
 - Address the user directly with "you can" and "you should"
+${needsFollowUps ? '\n- Since there is extensive information available, provide a brief summary and note that more details are available' : ''}
 
 Context about available user workflows:
 ${context}
 
 User's question: ${message}
 
-Provide a helpful response that explains what the user can do in the interface:`;
+Provide a helpful, concise response (250 characters max) that explains what the user can do in the interface:`;
 
       if (this.useLocalInference) {
-        return await this.generateLocalResponse({ message: prompt, context });
+        return await this.generateLocalResponse({ message: prompt, context, needsFollowUps, workflowCount });
       } else {
-        return await this.generateRunpodResponse({ message: prompt, context });
+        return await this.generateRunpodResponse({ message: prompt, context, needsFollowUps, workflowCount });
       }
     } catch (error) {
       logger.error("Response generation failed", { error: error.message });
@@ -46,18 +54,31 @@ Provide a helpful response that explains what the user can do in the interface:`
     }
   }
 
-  async generateLocalResponse({ message, context }) {
+  async generateLocalResponse({ message, context, needsFollowUps, workflowCount }) {
     try {
       const response = await axios.post(this.localUrl + "/generate", {
         prompt: message,
-        max_length: 400,
+        max_length: 300,
         temperature: 0.3,
       });
 
+      let generatedText =
+        response.data?.generated_text ||
+        "I apologize, but I couldn't generate a proper response.";
+
+      // Enforce 250 character limit
+      if (generatedText.length > 250) {
+        generatedText = generatedText.substring(0, 247) + "...";
+      }
+
+      // Generate follow-up questions if needed
+      const followUpQuestions = needsFollowUps
+        ? this.generateFollowUpQuestions(context, workflowCount)
+        : [];
+
       return {
-        response:
-          response.data?.generated_text ||
-          "I apologize, but I couldn't generate a proper response.",
+        response: generatedText,
+        followUpQuestions: followUpQuestions,
         confidence: 0.8,
         source: "local",
       };
@@ -67,7 +88,7 @@ Provide a helpful response that explains what the user can do in the interface:`
     }
   }
 
-  async generateRunpodResponse({ message, context }) {
+  async generateRunpodResponse({ message, context, needsFollowUps, workflowCount }) {
     try {
       if (!this.runpodUrl || !this.runpodApiKey) {
         throw new Error("RunPod configuration missing");
@@ -76,7 +97,7 @@ Provide a helpful response that explains what the user can do in the interface:`
       const payload = {
         input: {
           message: message,
-          max_length: 400,
+          max_length: 300,
           temperature: 0.3,
         },
       };
@@ -95,13 +116,24 @@ Provide a helpful response that explains what the user can do in the interface:`
       });
 
       if (response.data?.status === "COMPLETED") {
-        const generatedText =
+        let generatedText =
           response.data?.output?.response ||
           response.data?.output?.generated_text ||
           "I couldn't generate a proper response.";
 
+        // Enforce 250 character limit
+        if (generatedText.length > 250) {
+          generatedText = generatedText.substring(0, 247) + "...";
+        }
+
+        // Generate follow-up questions if needed
+        const followUpQuestions = needsFollowUps
+          ? this.generateFollowUpQuestions(context, workflowCount)
+          : [];
+
         return {
           response: generatedText,
+          followUpQuestions: followUpQuestions,
           confidence: 0.9,
           source: "runpod",
         };
@@ -134,24 +166,75 @@ Related features: ${feature.related}
       .join("\n");
   }
 
+  generateFollowUpQuestions(context, workflowCount) {
+    const questions = [];
+
+    // Extract key topics from context
+    const topics = this.extractTopicsFromContext(context);
+
+    // Generate 2-3 relevant follow-up questions
+    if (topics.includes("estimate")) {
+      questions.push("Would you like more details on creating or managing estimates?");
+    }
+    if (topics.includes("lead") || topics.includes("pipeline")) {
+      questions.push("Do you want to know more about managing your sales pipeline?");
+    }
+    if (topics.includes("analytics") || topics.includes("reporting")) {
+      questions.push("Would you like details on viewing analytics and reports?");
+    }
+    if (topics.includes("contract")) {
+      questions.push("Do you need help with contract creation or management?");
+    }
+    if (topics.includes("page") || topics.includes("builder")) {
+      questions.push("Would you like to learn more about creating marketing pages?");
+    }
+    if (topics.includes("user") || topics.includes("team")) {
+      questions.push("Do you want to know more about managing team members and permissions?");
+    }
+
+    // Return 2-3 most relevant questions
+    return questions.slice(0, 3);
+  }
+
+  extractTopicsFromContext(context) {
+    const topics = [];
+    const topicKeywords = {
+      estimate: ["estimate", "quote", "pricing"],
+      lead: ["lead", "customer", "inquiry"],
+      analytics: ["analytics", "report", "metric", "kpi"],
+      contract: ["contract", "agreement", "signing"],
+      page: ["page", "builder", "marketing", "content"],
+      user: ["user", "team", "permission", "role"],
+    };
+
+    const lowerContext = context.toLowerCase();
+    for (const [topic, keywords] of Object.entries(topicKeywords)) {
+      if (keywords.some((keyword) => lowerContext.includes(keyword))) {
+        topics.push(topic);
+      }
+    }
+
+    return topics;
+  }
+
   generateFallbackResponse(message, context) {
     const lowerMessage = message.toLowerCase();
 
-    // Simple keyword-based responses for your CRM
+    // Simple keyword-based responses for your CRM (kept concise)
     if (
       lowerMessage.includes("login") ||
       lowerMessage.includes("admin") ||
       lowerMessage.includes("dashboard")
     ) {
-      return `To access the admin dashboard, you'll need to navigate to the login page and enter your administrator credentials. Once logged in, you'll have access to the main dashboard where you can manage leads, users, and create marketing pages. If you don't have admin access, contact your system administrator.`;
+      return `Access the admin dashboard via the login page. Once logged in, you can manage leads, users, and create marketing pages.`;
     }
 
     if (lowerMessage.includes("estimate") || lowerMessage.includes("quote")) {
-      return `To get an estimate, visit one of our service pages (like stamped concrete or demolition), click the "Get Free Estimate" button, fill out the form with your name, phone, address, and service type, then submit it. Our team will call you back within 24 hours to discuss your project.`;
+      return `Visit a service page, click "Get Free Estimate", fill out the form, and submit. We'll call you within 24 hours.`;
     }
 
     if (lowerMessage.includes("lead") || lowerMessage.includes("customer")) {
-      return `To manage leads, access the admin dashboard and click on the Leads tab. From there you can view all customer inquiries, update lead stages, add notes, and track your sales pipeline from initial contact to completed projects.`;
+      return `Go to the admin dashboard and click the Leads tab to view inquiries, update stages, add notes, and track your pipeline.`;
     }
 
     if (
@@ -159,7 +242,7 @@ Related features: ${feature.related}
       lowerMessage.includes("location") ||
       lowerMessage.includes("serve")
     ) {
-      return `To check if we serve your area, visit our location-specific pages like /cleveland-ohio or /akron-ohio to see service availability in your city. You can also request an estimate and we'll confirm if we cover your location.`;
+      return `Check location pages like /cleveland-ohio or /akron-ohio to see service availability, or request an estimate to confirm coverage.`;
     }
 
     if (
@@ -167,11 +250,11 @@ Related features: ${feature.related}
       lowerMessage.includes("user") ||
       lowerMessage.includes("staff")
     ) {
-      return `To manage team members, go to the admin dashboard and navigate to the Users tab. From there you can add new team members, set their roles and permissions, and track team activity.`;
+      return `Go to the admin dashboard, navigate to the Users tab to add team members, set roles, and manage permissions.`;
     }
 
-    // Generic helpful response
-    return `I'd be happy to help you with "${message}"! This construction CRM system allows customers to request estimates through service pages, and staff to manage leads, users, and marketing pages through the admin dashboard. What specific feature would you like to know more about?`;
+    // Generic helpful response (concise)
+    return `I can help with estimates, lead management, analytics, contracts, and more. What would you like to know?`;
   }
 }
 
